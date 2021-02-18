@@ -37,4 +37,5 @@ vignettes/*.pdf
 
 # R Environment Variables
 .Renviron
-*.rds
+in_development/shiny_bookmarks/*
+published/shiny_bookmarks/*
