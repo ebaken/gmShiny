@@ -31,13 +31,15 @@ selected_columns <- NULL
 semilms_manual_matrix <- matrix("", ncol = 3, nrow = 1)
 colnames(semilms_manual_matrix) <- c("Before", "Slide", "After")
 symmetry_manual_matrix <- matrix(NA, ncol = 4, nrow = 1)
-colnames(symmetry_manual_matrix) <- c("Specimen", "Individual", "Replicate", "Side")
+colnames(symmetry_manual_matrix) <- c("Spec", "Indiv", "Rep", "Side")
 color.ramp.options <- rbind(c('yellow', 'red'), c('blue', 'green'), c('pink', 'purple'))
 color.palette.options <- c("Dark2", "Accent", "PuBuGn")
 newmat <- NULL
-old_dependent_vars <- NULL
+old_independent_vars <- NULL
 drop_these <- NULL
 options(shiny.maxRequestSize = 30*1024^2)
+symmetry_landpairs_manual_matrix <- matrix(NA, ncol = 2, nrow = 1) 
+colnames(symmetry_landpairs_manual_matrix) <- c("Side 1", "Side 2")
 
 options(shiny.reactlog = TRUE) # this allows for the reaction log to be generated (hit command + fn + f3 to see it)
 
@@ -72,22 +74,70 @@ ui <- function(request) {
       hr(),
       fluidRow(
         column(width = 4, 
-               fileInput(inputId = "file_tps", label = "Choose Shape File", multiple = FALSE,  width = "auto",
-                         accept = c("text/tps",".tps",  "text/shapes", ".shapes", "text/nts",".nts"), 
-                         placeholder = "No shape file selected"), # upload tps files here
+               fluidRow(
+                 column(12, align = 'right',
+                        div(style = "padding: 0px; margin-bottom: 0px; font-size: 80%; height: 0px;",
+                            radioButtons(inputId = "shape_input_tps", NULL, 
+                                         choices = c("Thin Plate Spline" = "TPS", "StereoMorph" = "StereoMorph"),
+                                         selected = "TPS", inline = T)))),
+               div(style = "margin-top: -10px; padding: 0px; margin-bottom: 0px;",
+                   conditionalPanel(
+                     condition = "input.shape_input_tps == 'TPS'",
+                     fileInput(inputId = "file_tps", label = "Choose TPS File", multiple = FALSE,  width = "auto",
+                               accept = c("text/tps",".tps", "text/TPS", ".TPS"), 
+                               placeholder = "No tps file selected")),
+                   conditionalPanel(
+                     condition = "input.shape_input_tps == 'StereoMorph'",
+                     fileInput(inputId = "file_stereomorph", "Choose StereoMorph Files", 
+                               accept = c("text/txt",".txt",  "text/shapes", ".shapes"),
+                               multiple = T, width = "auto", 
+                               placeholder = "No shape file selected"))), # upload tps files here
                conditionalPanel(
-                 condition = "output.file_tps_selected", hr(), # this panel shows up once a tps file has been selected
-                 div(style = "overflow: hidden; overflow-y: scroll; max-height: calc(100vh - 280px); position:relative;", 
+                 condition = "input.shape_input_tps == 'TPS' && output.file_tps_selected", hr(), # this panel shows up once a tps file has been selected
+                 fluidRow(
+                   column(4, radioButtons(inputId = "raw_lms_already_aligned", "Specimens Are:",
+                                          choices = c("Not Yet Aligned" = F, "Already Aligned" = T),
+                                          selected = F, width = "100%")),
+                   column(4,radioButtons(inputId = "spec_id", label = "Extract ID From:", # option to specify how the specimens are labeled
+                                         choices = c("ID line" = "ID", "IMAGE line" = "imageID", "Assign New Names" = "None"),
+                                         selected = "ID", width = "100%")),
+                   column(4, radioButtons(inputId = "neg_lms", "Negative LMs Are:", # option to indicate whether negative LMs should be taken as missing data or as real negative values
+                                          choices = c("True LMs" = F, "Missing Data" = T), 
+                                          selected = F, width = "100%"))),  br()),
+               conditionalPanel(
+                 condition = "input.shape_input_tps == 'StereoMorph' && output.stereomorph_curvetotal_n > 0",  
+                 div(style = "padding: 0px; margin: 0px;",
+                     hr(),
                      fluidRow(
-                       column(4, radioButtons(inputId = "raw_lms_already_aligned", "Specimens Are:",
-                                              choices = c("Not Yet Aligned" = F, "Already Aligned" = T),
-                                              selected = F, width = "100%")),
-                       column(4,radioButtons(inputId = "spec_id", label = "Extract ID From:", # option to specify how the specimens are labeled
-                                             choices = c("ID line" = "ID", "IMAGE line" = "imageID", "Assign New Names" = "None"),
-                                             selected = "ID", width = "100%")),
-                       column(4, radioButtons(inputId = "neg_lms", "Negative LMs Are:", # option to indicate whether negative LMs should be taken as missing data or as real negative values
-                                              choices = c("True LMs" = F, "Missing Data" = T), 
-                                              selected = F, width = "100%"))),  br(),
+                       column(12, h5(strong("Number of Curve Points")))
+                     ),
+                     fluidRow(
+                       column(2, align = 'center', numericInput(inputId = "stereomorph_curve1_n", HTML("<span style='font-size: 80%'>Curve 1</span>"), value = 3, min = 0, max = 100, step = 1, width = '100%')),
+                       conditionalPanel(
+                         "output.stereomorph_curvetotal_n > 1",
+                         column(2, align = 'center', numericInput(inputId = "stereomorph_curve2_n", HTML("<span style='font-size: 80%'>Curve 2</span>"), value = 3, min = 0, max = 100, step = 1, width = '100%')),
+                       ),
+                       conditionalPanel(
+                         "output.stereomorph_curvetotal_n > 2",
+                         column(2, align = 'center', numericInput(inputId = "stereomorph_curve3_n", HTML("<span style='font-size: 80%'>Curve 3</span>"), value = 3, min = 0, max = 100, step = 1, width = '100%'))
+                       ), 
+                       conditionalPanel(
+                         "output.stereomorph_curvetotal_n > 3",
+                         column(2, align = 'center', numericInput(inputId = "stereomorph_curve4_n", HTML("<span style='font-size: 80%'>Curve 4</span>"), value = 3, min = 0, max = 100, step = 1, width = '100%'))
+                       ),
+                       conditionalPanel(
+                         "output.stereomorph_curvetotal_n > 4",
+                         column(2, align = 'center', numericInput(inputId = "stereomorph_curve5_n", HTML("<span style='font-size: 80%'>Curve 5</span>"), value = 3, min = 0, max = 100, step = 1, width = '100%'))
+                       ),
+                       conditionalPanel(
+                         "output.stereomorph_curvetotal_n > 5",
+                         column(2, align = 'center', numericInput(inputId = "stereomorph_curve6_n", HTML("<span style='font-size: 80%'>Curve 6</span>"), value = 3, min = 0, max = 100, step = 1, width = '100%'))
+                       ))
+                 ), 
+                 hr()),
+               conditionalPanel(
+                 condition = "output.file_tps_selected", 
+                 div(style = "overflow: hidden; overflow-y: scroll; max-height: calc(100vh - 280px); position:relative;", 
                      verbatimTextOutput("shape_file"), br(), br()))), # this displays a preview of the input tps file, mostly for spot checking and general confirmation that the intended file was uploaded
         column(width = 4, 
                fileInput(inputId = "file_phy", label = "Choose Phylogeny File", multiple = FALSE, width = "auto", # input phylogeny file. at the moment, only .tre files have been tested or coded for.
@@ -342,6 +392,8 @@ ui <- function(request) {
                              actionButton(inputId = "go_run_gpa", label = "Run GPA",  
                                           style='width: 100%; height: 42px; padding:6px; 
                                              font-size:120%; background-color: #003366; border-color: #003366;'),
+                             downloadButton('export_all_data', "Export All Data",
+                                            style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;'),
                              conditionalPanel(
                                condition = "output.show_gpa", 
                                br(),
@@ -356,267 +408,7 @@ ui <- function(request) {
             )))
       )), 
     tabPanel(
-      "Shape Patterns",
-      tabsetPanel(
-        id = "tab_shapepatterns",
-        tabPanel(
-          "Phylogenetic Signal",
-          sidebarLayout(
-            mainPanel(
-              width = 9, br(),
-              wellPanel(style = "align: center; border-color: white; background-color: rgba(255,250,250, .25) ;",
-                        fluidRow(
-                          column(7, plotOutput(
-                            "phy_signal_plot", width = "100%", height = 500)),
-                          column(5, verbatimTextOutput(
-                            "phy_signal_results"
-                          ))),
-                        fluidRow(
-                          column(7, align = 'center',
-                                 downloadButton('export_phy_signal_plot', 'Export Signal Plot', 
-                                                style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;'))#,
-                          #column(5, align = 'center',
-                          #       downloadButton('export_phy_signal_results', 'Export Signal Results', 
-                          #                      style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;'))
-                        ), br())),
-            sidebarPanel(
-              width = 3, 
-              hr(style="border-color: purple;"),
-              fluidRow(align = "center", h4(strong("Settings"))), 
-              hr(style="border-color: purple;"),
-              radioButtons("phy_signal_input", "Test Signal of:",
-                           choices = c("Shape" = "shape")),
-              numericInput(inputId = "signal_perm", label = "Number of Permutations:", 
-                           value = 999, min = 0, max = 99999, step = 100)
-            ))),
-        tabPanel(
-          "Modularity",
-          sidebarLayout(
-            mainPanel(width = 9, style = "overflow: hidden; overflow-y: scroll; max-height: calc(100vh - 140px); position:relative;", 
-                      br(),
-                      wellPanel(style = "align: center; border-color: white; background-color: rgba(255,250,250, .25) ;",
-                                fluidRow(column(9, offset = 1, h4("Module Visualization"))), hr(),
-                                fluidRow(column(12, plotOutput("plot_modularity_visualization", width = "100%", height = 500))),
-                                fluidRow(
-                                  column(12, align = "center", 
-                                         downloadButton(
-                                           "export_modularity_visualization_plot", "Export Modularity Visualization", 
-                                           style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;')))),
-                      br(),
-                      wellPanel(style = "align: center; border-color: white; background-color: rgba(255,250,250, .25) ;",
-                                fluidRow(column(9, offset = 1, h4("Degree of Modularity"))), hr(),
-                                fluidRow(
-                                  column(6, plotOutput("plot_modularity_test", width = "100%", height = 400)),
-                                  column(6, verbatimTextOutput("stats_modularity_test"))),
-                                fluidRow(
-                                  column(6, align = "center", downloadButton("export_modularity_test_plot", "Export Modularity Plot", 
-                                                                             style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;'))#,
-                                  #column(6, downloadButton("export_modularity_test_table", "Export Modularity Table", 
-                                  #                          style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;'))
-                                )), 
-                      br(),
-                      conditionalPanel(
-                        "output.file_phy_selected",
-                        wellPanel(style = "align: center; border-color: white; background-color: rgba(255,250,250, .25) ;",
-                                  fluidRow(column(9, offset = 1, h4("Evolutionary Rate Variation Between Modules"))),
-                                  hr(),
-                                  fluidRow(
-                                    column(6, plotOutput("plot_compare_multi_evol_rates", width = "100%", height = 400)),
-                                    column(6, verbatimTextOutput("stats_compare_multi_evol_rates"))),
-                                  fluidRow(
-                                    column(6, align = "center", downloadButton("export_compare_multi_evol_rates_plot", "Export Rate Plot", 
-                                                                               style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;')),
-                                    #column(6, downloadButton("export_compare_multi_evol_rates_table", "Export Modular Evolutionary Rate Table", 
-                                    #                          style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;'))
-                                  )))),
-            sidebarPanel(
-              width = 3, style = "overflow: hidden; overflow-y: scroll; max-height: calc(100vh - 140px); position:relative;", 
-              hr(style="border-color: purple;"),
-              fluidRow(align = "center", h4(strong("Settings"))), 
-              hr(style="border-color: purple;"),
-              radioButtons("modularity_n_groups", "Number of Modules:", 
-                           choices = 2:8, inline = T), br(),
-              fluidRow(column(7,div(style = "height:10px;", h5(strong("Module 1 Landmarks:")))), 
-                       column(5, div(style = "height:10px;", 
-                                     colorSelectorDrop.ekb("module_1_col", label = NULL, dropdownside = "right")))), 
-              orderInput('modularity_group_1', NULL, items = NULL, width = "300px",
-                         connect = c('modularity_group_2', 'modularity_group_3', 'modularity_group_4', 'modularity_group_5', 'modularity_group_6', 'modularity_group_7', 'modularity_group_8')), br(),
-              fluidRow(column(7,div(style = "height:10px;", h5(strong("Module 2 Landmarks:")))), 
-                       column(5, div(style = "height:10px;", colorSelectorDrop.ekb("module_2_col", label = NULL, dropdownside = "right", selected = all_color_options[1])))),
-              orderInput('modularity_group_2', NULL, items = NULL, placeholder = 'Drag landmarks here...', width = "300px",
-                         connect = c('modularity_group_1', 'modularity_group_3', 'modularity_group_4', 'modularity_group_5', 'modularity_group_6', 'modularity_group_7', 'modularity_group_8')), br(),
-              conditionalPanel(
-                "input.modularity_n_groups > 2",
-                fluidRow(column(7,div(style = "height:10px;", h5(strong("Module 3 Landmarks:")))), column(5, div(style = "height:10px;", colorSelectorDrop.ekb("module_3_col", label = NULL, selected = all_color_options[4], dropdownside = "right")))),
-                orderInput('modularity_group_3', NULL, items = NULL, placeholder = 'Drag landmarks here...', width = "300px", 
-                           connect = c( 'modularity_group_1','modularity_group_2','modularity_group_4', 'modularity_group_5', 'modularity_group_6', 'modularity_group_7', 'modularity_group_8')), br()),
-              conditionalPanel(
-                "input.modularity_n_groups > 3",
-                fluidRow(column(7,div(style = "height:10px;", h5(strong("Module 4 Landmarks:")))), column(5, div(style = "height:10px;", colorSelectorDrop.ekb("module_4_col", label = NULL, selected = all_color_options[6], dropdownside = "right")))),
-                orderInput('modularity_group_4', NULL, items = NULL, placeholder = 'Drag landmarks here...', width = "300px", 
-                           connect = c( 'modularity_group_1','modularity_group_2','modularity_group_3',  'modularity_group_5', 'modularity_group_6', 'modularity_group_7', 'modularity_group_8')), br()),
-              conditionalPanel(
-                "input.modularity_n_groups > 4",
-                fluidRow(column(7, div(style = "height:10px;", h5(strong("Module 5 Landmarks:")))), column(5, div(style = "height:10px;", colorSelectorDrop.ekb("module_5_col", label = NULL, selected = all_color_options[11]), dropdownside = "right"))),
-                orderInput('modularity_group_5', NULL, items = NULL, placeholder = 'Drag landmarks here...', width = "300px",
-                           connect = c('modularity_group_1','modularity_group_2','modularity_group_3','modularity_group_4', 'modularity_group_6',  'modularity_group_7', 'modularity_group_8')), br()),
-              conditionalPanel(
-                "input.modularity_n_groups > 5",
-                fluidRow(column(7, div(style = "height:10px;", h5(strong("Module 6 Landmarks:")))), column(5, div(style = "height:10px;", colorSelectorDrop.ekb("module_6_col", label = NULL, selected = all_color_options[34], dropdownside = "right")))),
-                orderInput('modularity_group_6', NULL, items = NULL, placeholder = 'Drag landmarks here...', width = "300px",
-                           connect = c('modularity_group_1','modularity_group_2','modularity_group_3','modularity_group_4', 'modularity_group_5','modularity_group_7',  'modularity_group_8')), br()),
-              conditionalPanel(
-                "input.modularity_n_groups > 6",
-                fluidRow(column(7, div(style = "height:10px;", h5(strong("Module 7 Landmarks:")))), column(5, div(style = "height:10px;", colorSelectorDrop.ekb("module_7_col", label = NULL, selected = all_color_options[44], dropdownside = "right")))),
-                orderInput('modularity_group_7', NULL, items = NULL, placeholder = 'Drag landmarks here...', width = "300px",
-                           connect = c( 'modularity_group_8', 'modularity_group_1', 'modularity_group_2', 'modularity_group_3', 'modularity_group_4', 'modularity_group_5', 'modularity_group_6')), br()),
-              conditionalPanel(
-                "input.modularity_n_groups > 7",
-                fluidRow(column(7,div(style = "height:10px;", h5(strong("Module 8 Landmarks:")))), column(5, div(style = "height:10px;", colorSelectorDrop.ekb("module_8_col", label = NULL, selected = all_color_options[53], dropdownside = "right")))),
-                orderInput('modularity_group_8', NULL, items = NULL, placeholder = 'Drag landmarks here...', width = "300px",
-                           connect = c('modularity_group_1', 'modularity_group_2', 'modularity_group_3', 'modularity_group_4', 'modularity_group_5', 'modularity_group_6', 'modularity_group_7'))),
-              br(),
-              fluidRow(column(12, align = "center", actionButton("apply_modular_groups_go", label = "Assign LMs to Modules", width = "67%", style='padding:6px; font-size:85%'))),
-              br(),
-              fluidRow(column(12, sliderInput("plot_modularity_visualization_cex", label= "Landmark Size:", min = 0, max = 4, value = 1, step = .1))),
-              hr(),
-              conditionalPanel(
-                "output.file_phy_selected",
-                radioButtons("modularity_phylo_tf", "Evaluate Modularity in a Phylogenetic Context:", choices = c("True" = T, "False" = F), selected = F), br()),
-              numericInput(inputId = "modularity_perm", label = "Number of Permutations:", value = 999, min = 0, max = 99999, step = 100), br()
-            ))),
-        tabPanel(
-          "Integration",
-          sidebarLayout(
-            mainPanel(
-              width = 9, style = "overflow: hidden; overflow-y: scroll; max-height: calc(100vh - 130px); position:relative;", br(),
-              wellPanel(style = "align: center; border-color: white; background-color: rgba(255,250,250, .25) ;",
-                        fluidRow(column(9, offset = 1, h4("Global Integration"))),
-                        hr(),
-                        fluidRow(column(12, plotOutput("global_integration_plot", width = "100%", height = 600))),
-                        fluidRow(column(12, align = 'center',
-                                        downloadButton('export_global_integration_plot', 'Export Global Integration Plot', 
-                                                       style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;')))),
-              br(), 
-              wellPanel(style = "align: center; border-color: white; background-color: rgba(255,250,250, .25) ;",
-                        fluidRow(column(9, offset = 1, h4("Integration Between Modules (defined in 'Modularity' tab)"))), hr(),
-                        fluidRow(
-                          column(6, plotOutput("integration_test_plot", width = "100%", height = 400)),
-                          column(6, fluidRow(verbatimTextOutput("integration_test_results")))),
-                        fluidRow(
-                          column(6, align = 'center',
-                                 downloadButton('export_integration_test_plot', 'Export Integration Test Plot', 
-                                                style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;'))), 
-                        br()), br(), br()),
-            sidebarPanel(
-              width = 3, style = "overflow: hidden; overflow-y: scroll; max-height: calc(100vh - 130px); position:relative;", 
-              hr(style="border-color: purple;"),
-              fluidRow(align = "center", h4(strong("Settings"))), 
-              hr(style="border-color: purple;"),
-              conditionalPanel(
-                "output.file_trait_selected",
-                radioButtons("integration_group_by", "Integration Groups Defined:",
-                             choices = c("None" = "none", "Trait 1" = "by_trait_1",
-                                         "Trait 2" = "by_trait_2", "Trait 3" = "by_trait_3"),
-                             selected = "none")
-              ),
-              br(),
-              conditionalPanel("input.integration_group_by != 'none'", 
-                               radioButtons("integration_group_level", "Trait Level Plotted:",
-                                            choices = c("First" = 1, "Second" = 2, "Third" = 3)), br()),
-              conditionalPanel(
-                "output.file_phy_selected",
-                radioButtons("integration_phylo_tf", "Evaluate Integration in a Phylogenetic Context:", choices = c("True" = T, "False" = F), selected = F), br()),
-              numericInput(inputId = "integration_test_perm", label = "Number of Permutations:", 
-                           value = 999, min = 0, max = 99999, step = 100)
-            ))),
-        tabPanel(
-          "Symmetry",
-          sidebarLayout(
-            mainPanel(
-              width = 9, style = "overflow: hidden; overflow-y: scroll; max-height: calc(100vh - 130px); position:relative;", br(),
-              wellPanel(style = "align: center; border-color: white; background-color: rgba(255,250,250, .25) ;",
-                        fluidRow(column(9, offset = 1, h4("Symmetry of Shape Variation"))), hr(),
-                        conditionalPanel(
-                          "!output.symmetry_initiated", br(),
-                          em(h5("Define symmetry analysis parameters in 'Settings', then press 'Apply Symmetry Analyses'."))
-                        ),
-                        conditionalPanel(
-                          "output.symmetry_initiated",
-                          fluidRow(
-                            column(6, plotOutput("symmetry_plot", width = "100%", height = 700), br()),
-                            column(6, verbatimTextOutput("symmetry_results"))),
-                          fluidRow(
-                            column(6, align = 'center',
-                                   downloadButton('export_symmetry_plot', 'Export Symmetry Plot', 
-                                                  style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;')))), 
-                        br()), br(), br()),
-            sidebarPanel(
-              width = 3, style = "overflow: hidden; overflow-y: scroll; max-height: calc(100vh - 150px); position:relative;", 
-              hr(style="border-color: purple;"),
-              fluidRow(align = "center", h4(strong("Settings"))), 
-              hr(style="border-color: purple;"),
-              fluidRow(column(12, align = "center", 
-                              radioButtons("symmetry_obj_sym", "Symmetry Type:", choices = c("Object" = T, "Matching" = F), inline = T))),
-              h5("Assign Individuals, Replicates, and Sides Using:"),
-              fluidRow(column(4, align = "center", actionButton("go_symmetry_file", "File Upload", width = "100%", style='padding:6px; margin:0px;font-size:80%')),
-                       column(4, align = "center", actionButton("go_symmetry_pattern", "Patterning", width = "100%", style='padding:6px; margin:0px;font-size:80%')),
-                       column(4, align = "center", actionButton("go_symmetry_manual", "Manual Entry", width = "100%", style='padding:6px;margin:0px; font-size:80%'))), br(),
-              conditionalPanel(
-                "output.symmetry_pattern",
-                radioButtons('symmetry_ind_pattern', "Individuals Are:",  
-                             choices = c("Not Repeated" = "no_repeats",
-                                         "Grouped Every nth Specimen" = "nth", 
-                                         "Grouped in Blocks" = "blocks"),
-                             selected = "no_repeats"),
-                #radioButtons('symmetry_replicate_pattern', "Group Replicates:",  
-                #             choices = c("No Replicates" = "none",
-                #                         "Every nth Specimen" = "nth", 
-                #                         "In Blocks" = "blocks"),
-                #             selected = character(0)),
-                conditionalPanel(
-                  "input.symmetry_obj_sym == 'TRUE'", 
-                  radioButtons('symmetry_land_pairs_pattern', "Group Landmarks:",  
-                               choices = c("Every Other" = "every_other",
-                                           "In Blocks" = "blocks", 
-                                           "With File Upload" = "file"),
-                               selected = character(0))
-                ),
-                conditionalPanel(
-                  "input.symmetry_obj_sym == 'FALSE'",
-                  radioButtons('symmetry_side_pattern', "Group Sides:",  
-                               choices = c("Every Other" = "every_other",
-                                           "In Blocks" = "blocks"),
-                               selected = character(0))
-                )),
-              conditionalPanel(
-                "output.show_symmetry_file",
-                fileInput("symmetry_file_upload",label = "Choose File Defining Individuals, Replicates, and Sides:", 
-                          multiple = FALSE, width = "auto", # input trait file. at the moment, only .csv files are allowed
-                          accept = c("text/csv",".csv", "text/xls", ".xls", "text/xlsx", ".xlsx"), 
-                          placeholder = "No file selected")),
-              conditionalPanel(
-                "output.symmetry_land_pairs_file_input",
-                fileInput("symmetry_land_pairs_file_upload",label = "Choose File Defining Landmark Side Assignment:", 
-                          multiple = FALSE, width = "auto", # input trait file. at the moment, only .csv files are allowed
-                          accept = c("text/csv",".csv", "text/xls", ".xls", "text/xlsx", ".xlsx"), 
-                          placeholder = "No file selected")
-              ),
-              conditionalPanel(
-                "output.show_symmetry_definitions",
-                div(style = "font-size:80%; align: center;", #text-align: center;
-                    matrixInput(
-                      inputId = "symmetry_definitions", label = "Specimen Assignments",
-                      value = symmetry_manual_matrix, class = "character",
-                      cols = list(names = T), rows = list(names = T, extend = T)))),
-              numericInput(inputId = "symmetry_perm", label = "Number of Permutations:", 
-                           value = 999, min = 0, max = 99999, step = 100),
-              fluidRow(column(12, align = "center", actionButton("run_symmetry_go", "Apply Symmetry Analyses" ))), br(),
-              fluidRow(column(12, align = "center", actionButton("go_symmetry_useoutput", "Use Symmetric Component of Shape Variation", style='font-size:80%;'))), br(),
-            )))
-      )),
-    tabPanel(
-      "Morphospace Plot", # why are the conditional panels not working on this tab panel? ???
+      "Morphospace and Warp Grids", # why are the conditional panels not working on this tab panel? ???
       sidebarLayout(
         position = "right", 
         sidebarPanel(
@@ -958,6 +750,285 @@ ui <- function(request) {
                       br()), br())
         ))),
     tabPanel(
+      "Shape Patterns",
+      tabsetPanel(
+        id = "tab_shapepatterns",
+        tabPanel(
+          "Phylogenetic Signal",
+          sidebarLayout(
+            mainPanel(
+              width = 9, br(),
+              wellPanel(style = "align: center; border-color: white; background-color: rgba(255,250,250, .25) ;",
+                        fluidRow(
+                          column(7, plotOutput(
+                            "phy_signal_plot", width = "100%", height = 500)),
+                          column(5, verbatimTextOutput(
+                            "phy_signal_results"
+                          ))),
+                        fluidRow(
+                          column(7, align = 'center',
+                                 downloadButton('export_phy_signal_plot', 'Export Signal Plot', 
+                                                style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;'))#,
+                          #column(5, align = 'center',
+                          #       downloadButton('export_phy_signal_results', 'Export Signal Results', 
+                          #                      style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;'))
+                        ), br())),
+            sidebarPanel(
+              width = 3, 
+              hr(style="border-color: purple;"),
+              fluidRow(align = "center", h4(strong("Settings"))), 
+              hr(style="border-color: purple;"),
+              radioButtons("phy_signal_input", "Test Signal of:",
+                           choices = c("Shape" = "shape")),
+              numericInput(inputId = "signal_perm", label = "Number of Permutations:", 
+                           value = 999, min = 0, max = 99999, step = 100)
+            ))),
+        tabPanel(
+          "Modularity",
+          sidebarLayout(
+            mainPanel(width = 9, style = "overflow: hidden; overflow-y: scroll; max-height: calc(100vh - 140px); position:relative;", 
+                      br(),
+                      wellPanel(style = "align: center; border-color: white; background-color: rgba(255,250,250, .25) ;",
+                                fluidRow(column(9, offset = 1, h4("Module Visualization"))), hr(),
+                                fluidRow(column(12, plotOutput("plot_modularity_visualization", width = "100%", height = 500))),
+                                fluidRow(
+                                  column(12, align = "center", 
+                                         downloadButton(
+                                           "export_modularity_visualization_plot", "Export Modularity Visualization", 
+                                           style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;')))),
+                      br(),
+                      wellPanel(style = "align: center; border-color: white; background-color: rgba(255,250,250, .25) ;",
+                                fluidRow(column(9, offset = 1, h4("Degree of Modularity"))), hr(),
+                                fluidRow(
+                                  column(6, plotOutput("plot_modularity_test", width = "100%", height = 400)),
+                                  column(6, verbatimTextOutput("stats_modularity_test"))),
+                                fluidRow(
+                                  column(6, align = "center", downloadButton("export_modularity_test_plot", "Export Modularity Plot", 
+                                                                             style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;'))#,
+                                  #column(6, downloadButton("export_modularity_test_table", "Export Modularity Table", 
+                                  #                          style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;'))
+                                )), 
+                      br(),
+                      conditionalPanel(
+                        "output.file_phy_selected",
+                        wellPanel(style = "align: center; border-color: white; background-color: rgba(255,250,250, .25) ;",
+                                  fluidRow(column(9, offset = 1, h4("Evolutionary Rate Variation Between Modules"))),
+                                  hr(),
+                                  fluidRow(
+                                    column(6, plotOutput("plot_compare_multi_evol_rates", width = "100%", height = 400)),
+                                    column(6, verbatimTextOutput("stats_compare_multi_evol_rates"))),
+                                  fluidRow(
+                                    column(6, align = "center", downloadButton("export_compare_multi_evol_rates_plot", "Export Rate Plot", 
+                                                                               style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;')),
+                                    #column(6, downloadButton("export_compare_multi_evol_rates_table", "Export Modular Evolutionary Rate Table", 
+                                    #                          style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;'))
+                                  )))),
+            sidebarPanel(
+              width = 3, style = "overflow: hidden; overflow-y: scroll; max-height: calc(100vh - 140px); position:relative;", 
+              hr(style="border-color: purple;"),
+              fluidRow(align = "center", h4(strong("Settings"))), 
+              hr(style="border-color: purple;"),
+              radioButtons("modularity_n_groups", "Number of Modules:", 
+                           choices = 2:8, inline = T), br(),
+              fluidRow(column(7,div(style = "height:10px;", h5(strong("Module 1 Landmarks:")))), 
+                       column(5, div(style = "height:10px;", 
+                                     colorSelectorDrop.ekb("module_1_col", label = NULL, dropdownside = "right")))), 
+              orderInput('modularity_group_1', NULL, items = NULL, width = "300px",
+                         connect = c('modularity_group_2', 'modularity_group_3', 'modularity_group_4', 'modularity_group_5', 'modularity_group_6', 'modularity_group_7', 'modularity_group_8')), br(),
+              fluidRow(column(7,div(style = "height:10px;", h5(strong("Module 2 Landmarks:")))), 
+                       column(5, div(style = "height:10px;", colorSelectorDrop.ekb("module_2_col", label = NULL, dropdownside = "right", selected = all_color_options[1])))),
+              orderInput('modularity_group_2', NULL, items = NULL, placeholder = 'Drag landmarks here...', width = "300px",
+                         connect = c('modularity_group_1', 'modularity_group_3', 'modularity_group_4', 'modularity_group_5', 'modularity_group_6', 'modularity_group_7', 'modularity_group_8')), br(),
+              conditionalPanel(
+                "input.modularity_n_groups > 2",
+                fluidRow(column(7,div(style = "height:10px;", h5(strong("Module 3 Landmarks:")))), column(5, div(style = "height:10px;", colorSelectorDrop.ekb("module_3_col", label = NULL, selected = all_color_options[4], dropdownside = "right")))),
+                orderInput('modularity_group_3', NULL, items = NULL, placeholder = 'Drag landmarks here...', width = "300px", 
+                           connect = c( 'modularity_group_1','modularity_group_2','modularity_group_4', 'modularity_group_5', 'modularity_group_6', 'modularity_group_7', 'modularity_group_8')), br()),
+              conditionalPanel(
+                "input.modularity_n_groups > 3",
+                fluidRow(column(7,div(style = "height:10px;", h5(strong("Module 4 Landmarks:")))), column(5, div(style = "height:10px;", colorSelectorDrop.ekb("module_4_col", label = NULL, selected = all_color_options[6], dropdownside = "right")))),
+                orderInput('modularity_group_4', NULL, items = NULL, placeholder = 'Drag landmarks here...', width = "300px", 
+                           connect = c( 'modularity_group_1','modularity_group_2','modularity_group_3',  'modularity_group_5', 'modularity_group_6', 'modularity_group_7', 'modularity_group_8')), br()),
+              conditionalPanel(
+                "input.modularity_n_groups > 4",
+                fluidRow(column(7, div(style = "height:10px;", h5(strong("Module 5 Landmarks:")))), column(5, div(style = "height:10px;", colorSelectorDrop.ekb("module_5_col", label = NULL, selected = all_color_options[11]), dropdownside = "right"))),
+                orderInput('modularity_group_5', NULL, items = NULL, placeholder = 'Drag landmarks here...', width = "300px",
+                           connect = c('modularity_group_1','modularity_group_2','modularity_group_3','modularity_group_4', 'modularity_group_6',  'modularity_group_7', 'modularity_group_8')), br()),
+              conditionalPanel(
+                "input.modularity_n_groups > 5",
+                fluidRow(column(7, div(style = "height:10px;", h5(strong("Module 6 Landmarks:")))), column(5, div(style = "height:10px;", colorSelectorDrop.ekb("module_6_col", label = NULL, selected = all_color_options[34], dropdownside = "right")))),
+                orderInput('modularity_group_6', NULL, items = NULL, placeholder = 'Drag landmarks here...', width = "300px",
+                           connect = c('modularity_group_1','modularity_group_2','modularity_group_3','modularity_group_4', 'modularity_group_5','modularity_group_7',  'modularity_group_8')), br()),
+              conditionalPanel(
+                "input.modularity_n_groups > 6",
+                fluidRow(column(7, div(style = "height:10px;", h5(strong("Module 7 Landmarks:")))), column(5, div(style = "height:10px;", colorSelectorDrop.ekb("module_7_col", label = NULL, selected = all_color_options[44], dropdownside = "right")))),
+                orderInput('modularity_group_7', NULL, items = NULL, placeholder = 'Drag landmarks here...', width = "300px",
+                           connect = c( 'modularity_group_8', 'modularity_group_1', 'modularity_group_2', 'modularity_group_3', 'modularity_group_4', 'modularity_group_5', 'modularity_group_6')), br()),
+              conditionalPanel(
+                "input.modularity_n_groups > 7",
+                fluidRow(column(7,div(style = "height:10px;", h5(strong("Module 8 Landmarks:")))), column(5, div(style = "height:10px;", colorSelectorDrop.ekb("module_8_col", label = NULL, selected = all_color_options[53], dropdownside = "right")))),
+                orderInput('modularity_group_8', NULL, items = NULL, placeholder = 'Drag landmarks here...', width = "300px",
+                           connect = c('modularity_group_1', 'modularity_group_2', 'modularity_group_3', 'modularity_group_4', 'modularity_group_5', 'modularity_group_6', 'modularity_group_7'))),
+              br(),
+              fluidRow(column(12, align = "center", actionButton("apply_modular_groups_go", label = "Assign LMs to Modules", width = "67%", style='padding:6px; font-size:85%'))),
+              br(),
+              fluidRow(column(12, sliderInput("plot_modularity_visualization_cex", label= "Landmark Size:", min = 0, max = 4, value = 1, step = .1))),
+              hr(),
+              conditionalPanel(
+                "output.file_phy_selected",
+                radioButtons("modularity_phylo_tf", "Evaluate Modularity in a Phylogenetic Context:", choices = c("True" = T, "False" = F), selected = F), br()),
+              numericInput(inputId = "modularity_perm", label = "Number of Permutations:", value = 999, min = 0, max = 99999, step = 100), br()
+            ))),
+        tabPanel(
+          "Integration",
+          sidebarLayout(
+            mainPanel(
+              width = 9, style = "overflow: hidden; overflow-y: scroll; max-height: calc(100vh - 130px); position:relative;", br(),
+              wellPanel(style = "align: center; border-color: white; background-color: rgba(255,250,250, .25) ;",
+                        fluidRow(column(9, offset = 1, h4("Global Integration"))),
+                        hr(),
+                        fluidRow(column(12, plotOutput("global_integration_plot", width = "100%", height = 600))),
+                        fluidRow(column(12, align = 'center',
+                                        downloadButton('export_global_integration_plot', 'Export Global Integration Plot', 
+                                                       style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;')))),
+              br(), 
+              wellPanel(style = "align: center; border-color: white; background-color: rgba(255,250,250, .25) ;",
+                        fluidRow(column(9, offset = 1, h4("Integration Between Modules (defined in 'Modularity' tab)"))), hr(),
+                        fluidRow(
+                          column(6, plotOutput("integration_test_plot", width = "100%", height = 400)),
+                          column(6, fluidRow(verbatimTextOutput("integration_test_results")))),
+                        fluidRow(
+                          column(6, align = 'center',
+                                 downloadButton('export_integration_test_plot', 'Export Integration Test Plot', 
+                                                style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;'))), 
+                        br()), br(), br()),
+            sidebarPanel(
+              width = 3, style = "overflow: hidden; overflow-y: scroll; max-height: calc(100vh - 130px); position:relative;", 
+              hr(style="border-color: purple;"),
+              fluidRow(align = "center", h4(strong("Settings"))), 
+              hr(style="border-color: purple;"),
+              conditionalPanel(
+                "output.file_trait_selected",
+                radioButtons("integration_group_by", "Integration Groups Defined:",
+                             choices = c("None" = "none", "Trait 1" = "by_trait_1",
+                                         "Trait 2" = "by_trait_2", "Trait 3" = "by_trait_3"),
+                             selected = "none")
+              ),
+              br(),
+              conditionalPanel("input.integration_group_by != 'none'", 
+                               radioButtons("integration_group_level", "Trait Level Plotted:",
+                                            choices = c("First" = 1, "Second" = 2, "Third" = 3)), br()),
+              conditionalPanel(
+                "output.file_phy_selected",
+                radioButtons("integration_phylo_tf", "Evaluate Integration in a Phylogenetic Context:", choices = c("True" = T, "False" = F), selected = F), br()),
+              numericInput(inputId = "integration_test_perm", label = "Number of Permutations:", 
+                           value = 999, min = 0, max = 99999, step = 100)
+            ))),
+        tabPanel(
+          "Symmetry",
+          sidebarLayout(
+            mainPanel(
+              width = 9, style = "overflow: hidden; overflow-y: scroll; max-height: calc(100vh - 130px); position:relative;", br(),
+              wellPanel(style = "align: center; border-color: white; background-color: rgba(255,250,250, .25) ;",
+                        fluidRow(column(9, offset = 1, h4("Symmetry of Shape Variation"))), hr(),
+                        conditionalPanel(
+                          "!output.symmetry_initiated", br(),
+                          em(h5("Define symmetry analysis parameters in 'Settings', then press 'Apply Symmetry Analyses'."))
+                        ),
+                        conditionalPanel(
+                          "output.symmetry_initiated",
+                          fluidRow(
+                            column(6, plotOutput("symmetry_plot", width = "100%", height = 700), br()),
+                            column(6, verbatimTextOutput("symmetry_results"))),
+                          fluidRow(
+                            column(6, align = 'center',
+                                   downloadButton('export_symmetry_plot', 'Export Symmetry Plot', 
+                                                  style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;')),
+                            column(6, align = 'center',
+                                   downloadButton('export_symmetry_tables', 'Export Symmetry ANOVA Table(s)', 
+                                                  style='width: 300px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;')))), 
+                        br()), br(), 
+              conditionalPanel("input.symmetry_obj_sym == 'TRUE'",
+                               wellPanel(
+                                 style = "align: center; border-color: white; background-color: rgba(255,250,250, .25) ;",
+                                 fluidRow(column(9, offset = 1, h4("Landmark Side Assignment Visualization"))), hr(),
+                                 plotOutput("symmetry_landpair_plot", width = "100%", height = 400), br(),
+                                 fluidRow(
+                                   column(12, align = "center", 
+                                          downloadButton('export_symmetry_landpairs_plot', 'Export Landmark Sides Plot', 
+                                                         style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;'))
+                                 ))), 
+              br()),
+            sidebarPanel(
+              width = 3, style = "overflow: hidden; overflow-y: scroll; max-height: calc(100vh - 150px); position:relative;", 
+              hr(style="border-color: purple;"),
+              fluidRow(align = "center", h4(strong("Settings"))), 
+              hr(style="border-color: purple;"),
+              fluidRow(column(12, align = "center", 
+                              radioButtons("symmetry_obj_sym", "Symmetry Type:", choices = c("Object" = T, "Matching" = F), inline = T))),
+              h5("Define Specimen Assignments:"),
+              fluidRow(column(6, align = "center", actionButton("go_symmetry_file", "Upload a File", width = "100%", style='padding:6px; margin:0px;font-size:80%')),
+                       column(6, align = "center", actionButton("go_symmetry_manual", "Manual Entry", width = "100%", style='padding:6px;margin:0px; font-size:80%'))), 
+              conditionalPanel(
+                "input.symmetry_obj_sym == 'TRUE'", 
+                br(),
+                fluidRow(
+                  column(6, align = "center", offset = 3, 
+                         actionButton("go_symmetry_no_replicates", 
+                                      "No Replicates", width = "100%", style='padding:6px;margin:0px; font-size:80%')))
+              ),         
+              conditionalPanel(
+                "output.show_symmetry_file",
+                br(),
+                fileInput("symmetry_file_upload",label = "Choose File Defining Specimen Assignments:", 
+                          multiple = FALSE, width = "auto", # input trait file. at the moment, only .csv files are allowed
+                          accept = c("text/csv",".csv", "text/xls", ".xls", "text/xlsx",
+                                     ".XLSX","text/CSV",".CSV", "text/XLS", ".XLS", "text/XLSX", ".XLSX"), 
+                          placeholder = "No file selected")),
+              conditionalPanel(
+                "output.show_symmetry_definitions",
+                wellPanel(
+                  style = "font-size:80%; align: center; overflow: hidden; overflow-y: scroll; max-height: 400px; position:relative;",
+                  matrixInput(
+                    inputId = "symmetry_definitions", label = "Specimen Assignments",
+                    value = symmetry_manual_matrix, class = "character",
+                    cols = list(names = T), rows = list(names = T, extend = T)))),
+              conditionalPanel(
+                "input.symmetry_obj_sym == 'TRUE'",
+                hr(),
+                h5("Assign Landmarks to Sides:"),
+                fluidRow(column(6, align = "center", actionButton("go_symmetry_landpairs_file", "Upload a File", width = "100%", style='padding:6px; margin:0px;font-size:80%')),
+                         column(6, align = "center", actionButton("go_symmetry_landpairs_manual", "Manual Entry", width = "100%", style='padding:6px;margin:0px; font-size:80%'))), br()),
+              conditionalPanel(
+                "output.show_symmetry_landpairs_file && input.symmetry_obj_sym == 'TRUE'",
+                fileInput("symmetry_land_pairs_file_upload",label = "Choose File Defining Landmark Side Assignments:", 
+                          multiple = FALSE, width = "auto", # input trait file. at the moment, only .csv files are allowed
+                          accept = c("text/csv",".csv", "text/xls", ".xls", "text/xlsx", ".xlsx",
+                                     ".XLSX","text/CSV",".CSV", "text/XLS", ".XLS", "text/XLSX", ".XLSX"), 
+                          placeholder = "No file selected")
+              ),
+              conditionalPanel(
+                "output.show_symmetry_landpairs_definitions", 
+                wellPanel(
+                  style = "font-size:80%; align: center; overflow: hidden; overflow-y: scroll; max-height: 400px; position:relative;",
+                  matrixInput(
+                    inputId = "symmetry_landpairs_definitions", 
+                    label = "Landmark Side Assignments",
+                    value = symmetry_landpairs_manual_matrix, class = "character",
+                    cols = list(names = T), rows = list(names = F, extend = T)))),
+              hr(),
+              numericInput(inputId = "symmetry_perm", label = "Number of Permutations:", 
+                           value = 999, min = 0, max = 99999, step = 100),
+              fluidRow(column(12, align = "center", actionButton("run_symmetry_go", "Run Symmetry Analyses" ))), hr(),
+              fluidRow(column(12, align = "center", actionButton("go_symmetry_useoutput", "Use Symmetric Component of Shape Variation", style='width: 100%'))), br(),
+              fluidRow(column(12, align = "center", actionButton("export_symmetry_useoutput", "Export Symmetric Component of Shape Variation", style='width: 100%; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;'))), br(),
+              fluidRow(column(12, align = "center", actionButton("go_asymmetry_useoutput", "Use Asymmetric Component of Shape Variation", style='width: 100%'))), br(),
+              fluidRow(column(12, align = "center", actionButton("export_asymmetry_useoutput", "Export Asymmetric Component of Shape Variation", style='width: 100%; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;'))), 
+              br(),
+            )))
+      )),
+    
+    tabPanel(
       "Linear Models",
       tabsetPanel(
         id = "tab_linearmodels",
@@ -1040,10 +1111,10 @@ ui <- function(request) {
               style = "overflow: hidden; overflow-y: scroll; max-height: calc(100vh - 140px); position:relative;",
               hr(style="border-color: purple;"),
               fluidRow(align = "center", h4(strong("Settings"))), hr(style="border-color: purple;"),
-              checkboxGroupInput(inputId = "dependent_variables", "Dependent Variables Tested:", inline = F,
+              checkboxGroupInput(inputId = "independent_variables", "Independent Variables Tested:", inline = F,
                                  choices = c("Trait 1" = "init", "Trait 2" = "3", "Trait 3" = "4"), selected = "2"), 
               conditionalPanel(condition = "output.multiple_terms_selected", 
-                               orderInput(inputId = 'dependent_variables_order', label = "Trait Order:", items = c("Trait 1"), width = "300px"),
+                               orderInput(inputId = 'independent_variables_order', label = "Trait Order:", items = c("Trait 1"), width = "300px"),
                                #                 checkboxInput(inputId = "interactions_included", "Include Interactions")
                                br()),
               conditionalPanel(condition = "output.file_phy_selected", 
@@ -1087,7 +1158,7 @@ ui <- function(request) {
                          conditionalPanel(
                            "input.allometry_predictor == 'csize'",
                            radioButtons("allometry_log_csize", "Log Transform Centroid Size", choices = c(TRUE, FALSE))),
-                         selectInput("allometry_color", "Color Points:", choices = c("Upload Trait Data" = "none")),
+                         selectInput("allometry_color", "Color Points:", choices = c("All One Color" = "all_one_color")),
                          sliderInput("allometry_pt_size", "Point Size:", min = 0.1, max = 5, value = 1)
             ))),
         tabPanel(
@@ -1120,22 +1191,22 @@ ui <- function(request) {
               style = "overflow: hidden; overflow-y: scroll; max-height: calc(100vh - 140px); position:relative;",
               hr(style="border-color: purple;"),
               fluidRow(align = "center", h4(strong("Settings"))), hr(style="border-color: purple;"),
-              checkboxGroupInput(inputId = "dependent_variables_model_1", "Dependent Variables Tested in Model 1:", inline = F,
+              checkboxGroupInput(inputId = "independent_variables_model_1", "Independent Variables Tested in Model 1:", inline = F,
                                  choices = c("Trait 1" = "init", "Trait 2" = "3", "Trait 3" = "4"), selected = "2"), 
               conditionalPanel(condition = "output.multiple_terms_selected_model_1", 
-                               orderInput(inputId = 'dependent_variables_order_model_1', label = "Model 1 Trait Order:", 
+                               orderInput(inputId = 'independent_variables_order_model_1', label = "Model 1 Trait Order:", 
                                           items = c("Trait 1"), width = "300px")), br(),
-              checkboxGroupInput(inputId = "dependent_variables_model_2", "Dependent Variables Tested in Model 2:", inline = F,
+              checkboxGroupInput(inputId = "independent_variables_model_2", "Independent Variables Tested in Model 2:", inline = F,
                                  choices = c("Trait 1" = "init", "Trait 2" = "3", "Trait 3" = "4"), selected = "2"), 
               conditionalPanel(condition = "output.multiple_terms_selected_model_2", 
-                               orderInput(inputId = 'dependent_variables_order_model_2', label = "Model 2 Trait Order:", 
+                               orderInput(inputId = 'independent_variables_order_model_2', label = "Model 2 Trait Order:", 
                                           items = c("Trait 1"), width = "300px")), 
               checkboxInput("add_third_model", em("Add a Third Model")),
               conditionalPanel("input.add_third_model", 
-                               checkboxGroupInput(inputId = "dependent_variables_model_3", "Dependent Variables Tested in Model 3:", inline = F,
+                               checkboxGroupInput(inputId = "independent_variables_model_3", "Independent Variables Tested in Model 3:", inline = F,
                                                   choices = c("Trait 1" = "init", "Trait 2" = "3", "Trait 3" = "4"), selected = "2"), 
                                conditionalPanel(condition = "output.multiple_terms_selected_model_3", 
-                                                orderInput(inputId = "dependent_variables_order_model_3", label = "Model 3 Trait Order:", 
+                                                orderInput(inputId = "independent_variables_order_model_3", label = "Model 3 Trait Order:", 
                                                            items = c("Trait 1"), width = "300px"))),
               #checkboxInput(inputId = "interactions_included_model_comparison", "Include Interactions"),
               radioButtons(inputId = "pgls_ols_model_comparison", "Analysis Type:", inline = T, choices = c("PGLS" = "pgls", "OLS" = "ols"), selected = "pgls"),
@@ -1148,58 +1219,62 @@ ui <- function(request) {
           )),
         
         tabPanel(
-          "Trajectory",
+          "Trajectory Analysis",
           sidebarLayout(
-            mainPanel(width = 9#, 
-                      #br(),
-                      #fluidRow(column(9, offset = 1, h5("Model"))),
-                      #hr(), 
-                      #fluidRow(column(7, plotOutput("trajectory_plot", width = "100%", height = 600)),
-                      #         column(5, verbatimTextOutput("trajectory_results")))
+            mainPanel(
+              width = 9, br(),
+              fluidRow(column(11, offset = 1, textOutput("model_trajectory", container = h5))), 
+              hr(), 
+              fluidRow(column(6, plotOutput("trajectory_plot", width = "100%", height = 600)),
+                       column(6, verbatimTextOutput("trajectory_results")))
             ),
-            sidebarPanel(width = 3, 
-                         hr(style="border-color: purple;"),
-                         fluidRow(align = "center", h4(strong("Settings"))), 
-                         hr(style="border-color: purple;"),
-                         radioButtons("trajectory_group", "Group", choices = c("Upload Trait Data" = "none")),
-                         radioButtons("trajectory_trait", "Trait", choices = c("Upload Trait Data" = "none")))
+            sidebarPanel(
+              width = 3, 
+              hr(style="border-color: purple;"),
+              fluidRow(align = "center", h4(strong("Settings"))), 
+              hr(style="border-color: purple;"),
+              radioButtons("trajectory_group", "Group:", choices = c("Upload Trait Data" = "none")),
+              radioButtons("trajectory_trait", "Trait:", choices = c("Upload Trait Data" = "none")),
+              radioButtons("trajectory_attribute", "Attributes", choices = c("Magnitude Difference" = "MD", 
+                                                                             "Trajectory Correlations" = "TC",
+                                                                             "Trajectory Shape Differences" = "SD")))
           ))
         
       )),
     tabPanel(
       "Extras",  
-             tabsetPanel(
-               id = "tab_extras",
-               tabPanel(
-                 "Tutorials",
-             fluidRow(h4("Part 1: Data Input Tab")),
-             #fluidRow(HTML('<iframe width="900" height="500" src="https://iastate.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id=822b0e7b-cba8-4643-b407-ac3d01546f19" frameborder="0" allow="accelerometer; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>')),
-             fluidRow(h4("Part 2: Links and SemiLandmarks")), 
-             #fluidRow(HTML('<iframe width="900" height="500" src="https://iastate.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id=e78d9298-1ba8-416a-a2a1-ac3d0154855e" frameborder="0" allow="accelerometer; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>')),
-             fluidRow(h4("Part 3: Visualize Outliers")), 
-             #fluidRow(HTML('<iframe width="900" height="500" src="https://iastate.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id=aadff764-3960-4a35-86ad-ac3d01588c71" frameborder="0" allow="accelerometer; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>')),
-             fluidRow(h4("Part 4: Morphospace Tab")), 
-             #fluidRow(HTML('<iframe width="900" height="500" src="https://iastate.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id=c5ec117a-b048-4835-87fe-ac3d01595d05" frameborder="0" allow="accelerometer; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>')),
-             fluidRow(h4("Part 5: Morphospace Tab Continued")), 
-             #fluidRow(HTML('<iframe width="900" height="500" src="https://iastate.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id=f4556ad4-d5e0-4313-a06e-ac3d015c4db5" frameborder="0" allow="accelerometer; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>')),
-             fluidRow(h4("Part 6: Statistical Analyses Tab")), 
-             #fluidRow(HTML('<iframe width="900" height="500" src="https://iastate.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id=cc5483f4-2adb-4c3e-9a46-ac40016a62dd" frameborder="0" allow="accelerometer; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>')),
-             fluidRow(h4("Part 7: Real Data Example"))
-             #fluidRow(HTML('<iframe width="900" height="500" src="https://iastate.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id=3cd14240-ce64-4475-9b59-ac40016c1ae3" frameborder="0" allow="accelerometer; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>'))
-    ),
-    tabPanel(
-      "News and Upcoming Features",
-      fluidRow(textOutput("news")),
-      hr(),
-      fluidRow(textOutput("upcoming_features"))
-    ),
-    tabPanel(
-      "Citation Information"
-    ),
-    tabPanel(
-      "Leave Feedback"
-    )
-    )), 
+      tabsetPanel(
+        id = "tab_extras",
+        tabPanel(
+          "Tutorials",
+          fluidRow(h4("Part 1: Data Input Tab")),
+          #fluidRow(HTML('<iframe width="900" height="500" src="https://iastate.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id=822b0e7b-cba8-4643-b407-ac3d01546f19" frameborder="0" allow="accelerometer; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>')),
+          fluidRow(h4("Part 2: Links and SemiLandmarks")), 
+          #fluidRow(HTML('<iframe width="900" height="500" src="https://iastate.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id=e78d9298-1ba8-416a-a2a1-ac3d0154855e" frameborder="0" allow="accelerometer; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>')),
+          fluidRow(h4("Part 3: Visualize Outliers")), 
+          #fluidRow(HTML('<iframe width="900" height="500" src="https://iastate.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id=aadff764-3960-4a35-86ad-ac3d01588c71" frameborder="0" allow="accelerometer; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>')),
+          fluidRow(h4("Part 4: Morphospace Tab")), 
+          #fluidRow(HTML('<iframe width="900" height="500" src="https://iastate.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id=c5ec117a-b048-4835-87fe-ac3d01595d05" frameborder="0" allow="accelerometer; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>')),
+          fluidRow(h4("Part 5: Morphospace Tab Continued")), 
+          #fluidRow(HTML('<iframe width="900" height="500" src="https://iastate.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id=f4556ad4-d5e0-4313-a06e-ac3d015c4db5" frameborder="0" allow="accelerometer; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>')),
+          fluidRow(h4("Part 6: Statistical Analyses Tab")), 
+          #fluidRow(HTML('<iframe width="900" height="500" src="https://iastate.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id=cc5483f4-2adb-4c3e-9a46-ac40016a62dd" frameborder="0" allow="accelerometer; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>')),
+          fluidRow(h4("Part 7: Real Data Example"))
+          #fluidRow(HTML('<iframe width="900" height="500" src="https://iastate.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id=3cd14240-ce64-4475-9b59-ac40016c1ae3" frameborder="0" allow="accelerometer; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>'))
+        ),
+        tabPanel(
+          "News and Upcoming Features",
+          fluidRow(textOutput("news")),
+          hr(),
+          fluidRow(textOutput("upcoming_features"))
+        ),
+        tabPanel(
+          "Citation Information"
+        ),
+        tabPanel(
+          "Leave Feedback"
+        )
+      )), 
     tags$style(type = "text/css", "a{color: #ceecf0;}"),
     tags$head(tags$style(".toprow{height:28px; margin-top: -7px;}")),
     tags$script('Shiny.addCustomMessageHandler("scrollCallback_outlier",
@@ -1225,32 +1300,32 @@ server <- function(input, output, session) {
   
   
   #### Instructions ####
-  tryObserveEvent(input$navbar, {
-    if(is.null(bookmark_vals$adjust_updates) & is.null(alert_vals$navbar_datainput_welcomealertdone)) { # silences this alert if coming from a bookmarked state or if this already ran once
-      shinyalert(
-        title = "Welcome!",
-        inputId = "keep_alerts_on_tf",
-        text = "Alerts like this are available throughout this App to help explain all the functionalities available to you. 
-        
-        Would you like to keep these Instructions on?",
-        size = "s", 
-        closeOnEsc = F,
-        closeOnClickOutside = F,
-        html = FALSE,
-        type = "success",
-        showConfirmButton = TRUE,
-        showCancelButton = TRUE,
-        confirmButtonText = "Yes",
-        confirmButtonCol = "#AEDEF4",
-        cancelButtonText = "No",
-        timer = 0,
-        imageUrl = "",
-        animation = TRUE
-      )
-      alert_vals$navbar_datainput_welcomealertdone <- "yes"
-    }
-  }
-  )
+  # tryObserveEvent(input$navbar, {
+  #   if(is.null(bookmark_vals$adjust_updates) & is.null(alert_vals$navbar_datainput_welcomealertdone)) { # silences this alert if coming from a bookmarked state or if this already ran once
+  #     shinyalert(
+  #       title = "Welcome!",
+  #       inputId = "keep_alerts_on_tf",
+  #       text = "Alerts like this are available throughout this App to help explain all the functionalities available to you. 
+  #       
+  #       Would you like to keep these Instructions on?",
+  #       size = "s", 
+  #       closeOnEsc = F,
+  #       closeOnClickOutside = F,
+  #       html = FALSE,
+  #       type = "success",
+  #       showConfirmButton = TRUE,
+  #       showCancelButton = TRUE,
+  #       confirmButtonText = "Yes",
+  #       confirmButtonCol = "#AEDEF4",
+  #       cancelButtonText = "No",
+  #       timer = 0,
+  #       imageUrl = "",
+  #       animation = TRUE
+  #     )
+  #     alert_vals$navbar_datainput_welcomealertdone <- "yes"
+  #   }
+  # }
+  # )
   
   tryObserveEvent(input$alert_on_off, ignoreInit = T, priority = -10,  {
     if(input$alert_on_off == F) { 
@@ -1315,6 +1390,7 @@ server <- function(input, output, session) {
       alert_vals$navbar_shapepatterns_signal <- NULL
       alert_vals$navbar_shapepatterns_modularity <- NULL
       alert_vals$navbar_shapepatterns_integration <- NULL
+      alert_vals$navbar_shapepatterns_symmetry <- NULL
       alert_vals$navbar_morphospaceplot <- NULL
       alert_vals$navbar_morphospaceplot_tipcol <- NULL
       alert_vals$navbar_morphospaceplot_tipcolalertdone <- NULL
@@ -1473,9 +1549,12 @@ server <- function(input, output, session) {
         if(req(input$tab_shapepatterns) == "Integration"){
           alert_vals$navbar_shapepatterns_integration  <- "Here"
         }
+        if(req(input$tab_shapepatterns) == "Symmetry"){
+          alert_vals$navbar_shapepatterns_symmetry <- "Here"
+        }
       }
       
-      if(req(input$navbar) == "Morphospace Plot"){
+      if(req(input$navbar) == "Morphospace and Warp Grids"){
         alert_vals$navbar_morphospaceplot <- "Here"
         if(req(input$tip_col_category) != "all_1_col"){
           alert_vals$navbar_morphospaceplot_tipcol <- "Here"
@@ -1646,7 +1725,7 @@ server <- function(input, output, session) {
         the corresponding option was selected on the Data Input page. <br><br>
         Once the GPA is performed (function <span style='font-family: Courier New'>gpagen</span>), 
         the specimens' centroid sizes will be passed on as a trait and can be used in various parts of the App (e.g., measuring phylogenetic
-        signal on the Shape Patterns page, coloring data points on the Morphospace Plot page, etc.). ",
+        signal on the Shape Patterns page, coloring data points on the Morphospace and Warp Grids page, etc.). ",
         size  = "m",
         html = T
       )
@@ -1770,10 +1849,24 @@ server <- function(input, output, session) {
     }
   })
   
+  tryObserveEvent(alert_vals$navbar_shapepatterns_symmetry, {
+    if(input$alert_on_off == TRUE) {
+      shinyalert(
+        title = "Upload a Landmark Side File",
+        text = "A button to upload your Landmark Side File should now be visible in the Settings.
+        
+        This can be either a CSV or an Excel file, and the data must be organized into two columns (one for each side). Not all landmarks must be assigned a side, but none can be repeated. Do not include column headers.
+        
+        See geomorph help file for the function 'bilat.symmetry' for examples of these matrices.",
+        inputId = "symmetry_land_pairs_file_input"
+      )
+    } # edit and add things
+  })
+  
   tryObserveEvent(alert_vals$navbar_morphospaceplot, {  
     if(input$alert_on_off == TRUE){
       shinyalert(
-        title = "Morphospace Plot Page",
+        title = "Morphospace and Warp Grids Page",
         text = "This page shows the shape data PCA plot generated from the functions 
       <span style='font-family: Courier New'>gm.prcomp</span> and <span style='font-family: Courier New'>plot</span>.
     <br></br>
@@ -1906,7 +1999,7 @@ server <- function(input, output, session) {
       <span style='font-family: Courier New'>procD.lm</span> corresponding to the 'Analysis Type' option in the Settings
         panel.
         <br><br>
-        The first step is defining which dependent variables you would like to include in the model ('Dependent Variables Tested'). 
+        The first step is defining which independent variables you would like to include in the model ('Independent Variables Tested'). 
         If more than one trait is selected, an option will appear to change the order of the traits by dragging and dropping. 
         As you select traits and change their order, the defined model will be explicated at the top of the main panel ('Model Tested').
         <strong>Once you are happy with your model and all remaining tests have been specified, press the 'Calculate' button at the bottom
@@ -2059,170 +2152,164 @@ server <- function(input, output, session) {
   })
   
   # symmetry individuals  
-  
-  tryObserveEvent(input$go_symmetry_file, ignoreInit = T,  priority = 10, {
-    vals$go_symmetry_pattern <- NULL
-    vals$go_symmetry_file <- input$go_symmetry_file
-  })
-  
-  tryObserveEvent(input$go_symmetry_pattern, ignoreInit = T, priority = 10, {
-    vals$go_symmetry_file <- NULL
-    vals$go_symmetry_pattern <- input$go_symmetry_pattern
-  })
-  
-  tryObserveEvent(input$go_symmetry_manual, ignoreInit = T, priority = 10, {
-    vals$go_symmetry_file <- NULL
-    vals$go_symmetry_pattern <- NULL
-    vals$go_show_specimen_assignments <- "go"
+  tryObserveEvent(input$symmetry_obj_sym, ignoreInit = F, {
+    
+    if(!is.null(update_vals$symmetry_definitions_selected)) {
+      symmetry_manual_matrix_replace <- update_vals$symmetry_definitions_selected
+    } else { 
+      symmetry_manual_matrix_replace <- symmetry_manual_matrix 
+      vals$go_symmetry_file <-  NULL
+      vals$go_symmetry_landpairs_file <- NULL
+      vals$go_show_specimen_assignments <- NULL
+      vals$go_show_landmark_assignments <- NULL
+      vals$run_symmetry_go <- NULL
+      vals$bilat_symmetry <- NULL
+      reset("symmetry_file_upload")
+      reset("symmetry_land_pairs_file_upload")
+      reset("run_symmetry_go")
+      reset("go_symmetry_no_replicates")
+    }
+    
+    if(!is.null(update_vals$symmetry_landpairs_definitions_selected)) {
+      symmetry_landpairs_manual_matrix_replace <- update_vals$symmetry_landpairs_definitions_selected
+    } else { symmetry_landpairs_manual_matrix_replace <- symmetry_landpairs_manual_matrix }
+    
     updateMatrixInput(session, "symmetry_definitions", 
-                      value = symmetry_manual_matrix)
-    updateRadioButtons(session, "symmetry_ind_pattern",  
-                       choices = c("Not Repeated" = "no_repeats",
-                                   "Grouped Every nth Specimen" = "nth", 
-                                   "Grouped in Blocks" = "blocks"),
-                       selected = "no_repeats")
+                      value = symmetry_manual_matrix_replace)
+    updateMatrixInput(session, "symmetry_landpairs_definitions", 
+                      value = symmetry_landpairs_manual_matrix_replace)
+    
     
   })
   
-  tryObserveEvent(input$symmetry_definitions, ignoreInit = T, priority= 10, {
-    updateRadioButtons(session, "symmetry_land_pairs_pattern", label = "Group Landmarks:", 
-                       choices = c("Every Other" = "every_other",
-                                   "In Blocks" = "blocks", 
-                                   "With File Upload" = "file"),
-                       selected = character(0))
-  })
-  
-  symmetry_ind_listen <- reactive({list(input$symmetry_ind_pattern, vals$go_symmetry_pattern)})
-  tryObserveEvent(symmetry_ind_listen(), ignoreInit = F,  priority = -10, {
-    req(input$symmetry_ind_pattern)
-    if(!is.null(vals$go_symmetry_pattern)) {
-      if(input$symmetry_ind_pattern == "no_repeats"){
-        shinyalert(
-          title = "Specimen Individuals Assigned",
-          text = "Each specimen has been assigned a unique identity, and thus the data do not include replicates.",
-          inputId = "symmetry_ind_pattern_no"
-        )
-      }
-      if(input$symmetry_ind_pattern == "nth") {
-        shinyalert(
-          title = "Define Individuals as Every Nth Specimen",
-          text = "Enter the integer that defines n. For example, if Individual A is represented by every 5th specimen, n = 5.",
-          type = "input",
-          inputType = "number",
-          inputId = "symmetry_ind_pattern_nth"
-        )
-      }
-      if(input$symmetry_ind_pattern == "blocks"){
-        shinyalert(
-          title = "Define Individuals in Blocks",
-          text = "Enter the integer that defines the size of each block. 
-        For example, if each individual is represented by 4 specimens in a row, enter '4'.",
-          type = "input",
-          inputType = "number",
-          inputId = "symmetry_ind_pattern_block"
-        )
-      }
-    }
-  })
-  
-  symmetry_ind_pattern_listen <- reactive({list(input$symmetry_ind_pattern_no,
-                                                input$symmetry_ind_pattern_nth, 
-                                                input$symmetry_ind_pattern_block)})
-  tryObserveEvent(symmetry_ind_pattern_listen(), ignoreInit = T, {
-    if(input$symmetry_ind_pattern == "no_repeats") {
-      symmetry_ind <- 1:dim(gpa_coords_rx())[3]
-      symmetry_replicate <- rep(1, dim(gpa_coords_rx())[3])
-      vals$symmetry_ind_no_repeats <- T
-    }
+  tryObserveEvent(input$go_symmetry_no_replicates, ignoreInit = F, {
     
-    if(input$symmetry_ind_pattern == "nth") {
-      n <- as.numeric(input$symmetry_ind_pattern_nth)
-      dimbyn <- dim(gpa_coords_rx())[3]/n
-      if(dimbyn == round(dimbyn)) { # if the specimen number splits evenly
-        symmetry_ind <- rep(1:n,dimbyn)
-        symmetry_replicate <- rep(1:dimbyn, each = n)
+    if(input$go_symmetry_no_replicates > 0) {
+      vals$go_symmetry_file <- NULL
+      vals$go_show_specimen_assignments <- NULL
+      
+      reset("symmetry_file_upload")
+      if(input$symmetry_obj_sym) {
+        symmetry_manual_matrix_indrep1s <- matrix(1, ncol = 2, nrow = dim(gpa_coords_rx())[3])
+        symmetry_manual_matrix_indrep1s[,1] <- 1:nrow(symmetry_manual_matrix_indrep1s)
+        colnames(symmetry_manual_matrix_indrep1s) <- c("Indiv", "Rep")
       } else {
-        symmetry_ind <- rep(1:n,floor(dimbyn))
-        symmetry_replicate <- rep(1:floor(dimbyn), each = n)
-        nas_left <- dim(gpa_coords_rx())[3] - length(symmetry_ind)
-        symmetry_ind <- c(symmetry_ind, 1:nas_left)
-        symmetry_replicate <- c(symmetry_replicate, rep(ceiling(dimbyn), nas_left))
+        symmetry_manual_matrix_indrep1s <- matrix(1, ncol = 2, nrow = dim(gpa_coords_rx())[3])
+        symmetry_manual_matrix_indrep1s[,1] <- 1:nrow(symmetry_manual_matrix_indrep1s)
+        sym_def_df <- as.data.frame(input$symmetry_definitions)
+        if(length(sym_def_df$Side) == dim(gpa_coords_rx())[3]) {
+          symmetry_manual_matrix_indrep1s <- cbind(symmetry_manual_matrix_indrep1s, sym_def_df$Side)
+        } else {
+          symmetry_manual_matrix_indrep1s <-  cbind(symmetry_manual_matrix_indrep1s, NA)
+        }
+        colnames(symmetry_manual_matrix_indrep1s) <- c("Indiv", "Rep", "Side")
       }
+      row.names(symmetry_manual_matrix_indrep1s) <- dimnames(gpa_coords_rx())[[3]]
+      updateMatrixInput(session, "symmetry_definitions", 
+                        value = symmetry_manual_matrix_indrep1s)
     }
-    
-    if(input$symmetry_ind_pattern == "blocks") {
-      n <- as.numeric(input$symmetry_ind_pattern_block)
-      dimbyn <- dim(gpa_coords_rx())[3]/n
-      if(dimbyn == round(dimbyn)) { # if the specimen number splits evenly
-        symmetry_ind <- rep(1:dimbyn, each = n)
-        symmetry_replicate <- rep(1:n, dimbyn)
-      } else {
-        symmetry_ind <- rep(1:floor(dimbyn), each = n)
-        symmetry_replicate <- rep(1:n, floor(dimbyn))
-        nas_left <- dim(gpa_coords_rx())[3] - length(symmetry_ind)
-        symmetry_ind <- c(symmetry_ind, rep(ceiling(dimbyn), nas_left))
-        symmetry_replicate <- c(symmetry_replicate, 1:nas_left)
-      }
+  })
+  
+  tryObserveEvent(input$go_symmetry_file, ignoreInit = F,  priority = 10, {
+    if(!is.null(input$go_symmetry_file)) {
+      vals$go_symmetry_file <- input$go_symmetry_file
     }
+  })
+  
+  tryObserveEvent(input$go_symmetry_landpairs_file, ignoreInit = F,  priority = 10, {
+    if(!is.null(input$go_symmetry_landpairs_file)){
+      vals$go_symmetry_landpairs_file <- input$go_symmetry_landpairs_file
+    }
+  })
+  
+  tryObserveEvent(input$symmetry_file_upload, ignoreInit = T, {
+    req(gpa_coords_rx())
+    req(input$symmetry_file_upload)
     
-    vals$symmetry_ind <- symmetry_ind
-    vals$symmetry_replicate <- symmetry_replicate
-    
-    if(is.null(vals$symmetry_side)){
-      symmetry_side <- rep(NA, dim(gpa_coords_rx())[3])
-    } else {symmetry_side <-vals$symmetry_side }
+    inFile <- input$symmetry_file_upload
+    if (endsWith(inFile$name, '.xlsx') | endsWith(inFile$name, '.xls')| 
+        endsWith(inFile$name, '.XLSX') | endsWith(inFile$name, '.XLS')){
+      symmetry_file <- readxl::read_excel(inFile$datapath)
+    } else if (endsWith(inFile$name, '.csv') | endsWith(inFile$name, '.CSV')){
+      symmetry_file <- read.csv(inFile$datapath) # read in trait file (this cant be from the trait_rx or else the reactives become circular)
+    } 
+    symmetry_file <- as.matrix(symmetry_file)
     
     if(input$symmetry_obj_sym) {
-      symmetry_definitions <- cbind(vals$symmetry_ind, vals$symmetry_replicate)
-      colnames(symmetry_definitions)<- c("Individual", "Replicate") #  
-      row.names(symmetry_definitions) <- dimnames(gpa_coords_rx())[[3]] #  
+      colnames(symmetry_file) <- c("Specimen", "Indiv", "Rep")
+      if(ncol(symmetry_file) != 3) {
+        shinyalert(
+          title = "Incorrect File Format",
+          text = "The file you have chosen is not in the correct format. 
+        For Object symmetry analyses, the file must have 3 columns: specimen ID, numerical assignments 
+        for Individuals, and numerical assignments for Replicates in that particular order.",
+          type = "error",
+          html = T
+        )
+      } else {
+        if(anyNA(match(dimnames(gpa_coords_rx())[[3]], symmetry_file[,1]))) {
+          shinyalert(
+            title = "Mismatch in Specimen Names",
+            text = "The specimen names in the first column in the uploaded file do not match the names of the specimens 
+            in the shape dataset.",
+            type = "error",
+            html = T
+          )
+        } else {
+          symmetry_file <- symmetry_file[match(dimnames(gpa_coords_rx())[[3]], symmetry_file[,1]), ]
+          rownames(symmetry_file) <- symmetry_file[,1]
+          symmetry_file <- symmetry_file[,-1]
+          updateMatrixInput(session, "symmetry_definitions", value = symmetry_file)
+          vals$go_show_specimen_assignments <- "go"
+        }
+      }
     } else {
-      symmetry_definitions <- cbind(vals$symmetry_ind, vals$symmetry_replicate, symmetry_side)
-      colnames(symmetry_definitions)<- c("Individual", "Replicate", "Side") #  
-      row.names(symmetry_definitions) <- dimnames(gpa_coords_rx())[[3]] #  
+      colnames(symmetry_file) <- c("Specimen", "Indiv", "Rep", "Side")
+      if(ncol(symmetry_file) != 4) { # change what triggers this and what is accepted
+        shinyalert(
+          title = "Incorrect File Format",
+          text = "The file you have chosen is not in the correct format. 
+        For Matching symmetry analyses, the file must have 4 columns: specimen ID, numerical assignments 
+        for Individuals, numerical assignments for Replicates, and numerical assignments 
+        for Sides in that particular order.",
+          type = "error",
+          html = T
+        )
+      } else {
+        if(anyNA(match(dimnames(gpa_coords_rx())[[3]], symmetry_file[,1]))) {
+          shinyalert(
+            title = "Mismatch in Specimen Names",
+            text = "The specimen names in the first column in the uploaded file do not match the names of the specimens 
+            in the shape dataset.",
+            type = "error",
+            html = T
+          )
+        } else {
+          symmetry_file <- symmetry_file[match(dimnames(gpa_coords_rx())[[3]], symmetry_file[,1]), ]
+          rownames(symmetry_file) <- symmetry_file[,1]
+          symmetry_file <- symmetry_file[,-1]
+          updateMatrixInput(session, "symmetry_definitions", value = symmetry_file)
+          vals$go_show_specimen_assignments <- "go"
+        }
+      }
     }
-    
-    updateMatrixInput(session, "symmetry_definitions", value = symmetry_definitions)
   })
   
-  
-  # symmetry land pairs  
-  tryObserveEvent(input$symmetry_land_pairs_pattern, ignoreInit = T, {
-    if(input$symmetry_land_pairs_pattern != "file"){
-      if(ceiling(dim(gpa_coords_rx())[1]/2) == floor(dim(gpa_coords_rx())[1]/2)) { # checking that things are even
-        
-        if(input$symmetry_land_pairs_pattern == "every_other") {
-          symmetry_land_pairs <- matrix(1:dim(lizards$coords)[1], ncol = 2, byrow = T)
-          shinyalert(
-            title = "Landmarks Assigned Every Other",
-            text = "Even landmarks have been assigned to one side, and odd landmarks have been assigned to the other."
-          )
-        }
-        if(input$symmetry_land_pairs_pattern == "blocks") {
-          symmetry_land_pairs <- matrix(1:dim(lizards$coords)[1], ncol = 2, byrow = F)
-          shinyalert(
-            title = "Landmarks Assigned in Blocks",
-            text = "The first half of the landmarks have been assigned to one side, and the second half of the landmarks have been assigned to the other."
-          )
-        }
-        vals$symmetry_land_pairs <- symmetry_land_pairs
-        
-      } else {
-        shinyalert(
-          title = "Odd Number of Landmarks",
-          text = "Landmark pairs cannot be defined automatically. Select Manual Entry for Grouping Landmarks."
-        )
-      } 
+  tryObserveEvent(input$go_symmetry_manual, ignoreInit = T,{ # priority = 10, 
+    vals$go_symmetry_file <- NULL
+    vals$go_show_specimen_assignments <- "go"
+    if(input$symmetry_obj_sym){
+      symmetry_manual_matrix_expanded <- matrix(NA, nrow = dim(gpa_coords_rx())[3], ncol = 2)
+      rownames(symmetry_manual_matrix_expanded) <- dimnames(gpa_coords_rx())[[3]]
+      colnames(symmetry_manual_matrix_expanded) <- c("Indiv", "Rep")
+      updateMatrixInput(session, "symmetry_definitions", 
+                        value = symmetry_manual_matrix_expanded)
     } else {
-      shinyalert(
-        title = "Upload a Landmark Side File",
-        text = "A button to upload your Landmark Side File should now be visible in the Settings.
-        
-        This can be either a CSV or an Excel file, and the data must be organized into two columns (one for each side). Not all landmarks must be assigned a side, but none can be repeated. Do not include column headers.
-        
-        See geomorph help file for the function 'bilat.symmetry' for examples of these matrices.",
-        inputId = "symmetry_land_pairs_file_input"
-      )
+      symmetry_manual_matrix_expanded <- matrix(NA, nrow = dim(gpa_coords_rx())[3], ncol = 3)
+      rownames(symmetry_manual_matrix_expanded) <- dimnames(gpa_coords_rx())[[3]]
+      colnames(symmetry_manual_matrix_expanded) <- c("Indiv", "Rep", "Side")
+      updateMatrixInput(session, "symmetry_definitions", 
+                        value = symmetry_manual_matrix_expanded)
     }
   })
   
@@ -2234,115 +2321,205 @@ server <- function(input, output, session) {
     } else if (endsWith(inFile$name, '.csv') | endsWith(inFile$name, '.CSV')){
       symmetry_land_pairs_file <- read.csv(inFile$datapath) # read in trait file (this cant be from the trait_rx or else the reactives become circular)
     } 
-    vals$symmetry_land_pairs <- symmetry_land_pairs_file
-  })
-  
-  
-  # symmetry sides
-  
-  symmetry_side_pattern_listen <- reactive({list(input$symmetry_side_pattern, input$symmetry_side)})
-  tryObserveEvent(symmetry_side_pattern_listen(), ignoreInit = T, {
-    req(input$symmetry_side_pattern)
-    if(input$symmetry_side_pattern == "every_other") {
-      
-      dimbyn <- dim(gpa_coords_rx())[3]/2
-      if(dimbyn == round(dimbyn)) { # if the specimen number splits evenly
-        symmetry_side <- rep(1:2,dimbyn)
-      } else {
-        symmetry_side <- rep(1:2,floor(dimbyn))
-        symmetry_side <- c(symmetry_side, 1)
-      } 
-      vals$symmetry_side <- symmetry_side
-      
-      symmetry_replicate <- rep(1, length(symmetry_side))
-      symmetry_replicate_loops <- unique(paste(vals$symmetry_ind, symmetry_side))
-      for(i in 1:length(symmetry_replicate_loops)){
-        all_reps_tf <- paste(vals$symmetry_ind, symmetry_side) %in% symmetry_replicate_loops[i]
-        symmetry_replicate[all_reps_tf] <- 1:length(which(all_reps_tf == T))
-      }
-      vals$symmetry_replicate <- symmetry_replicate
-      
-      
-      # if this happens, vals$symmetry_replicate should be adjusted !!!!
-    } 
-    if(input$symmetry_side_pattern == "blocks"){
-      
-      
-      symmetry_side <- rep(1, dim(gpa_coords_rx())[3])
-      ind_groups <- levels(as.factor(vals$symmetry_ind))
-      for(i in 1:length(ind_groups)) {
-        inds <- which(vals$symmetry_ind == ind_groups[i])
-        if(ceiling(length(inds)/2) == floor(length(inds)/2)) {
-          inds_second_half <- inds[(length(inds)/2 + 1):length(inds)]
-        } else { inds_second_half <- inds[ceiling(length(inds)/2):length(inds)]}
-        symmetry_side[inds_second_half] <- 2
-      }
-      vals$symmetry_side <- symmetry_side
-      
-      symmetry_replicate <- rep(1, length(symmetry_side))
-      symmetry_replicate_loops <- unique(paste(vals$symmetry_ind, symmetry_side))
-      for(i in 1:length(symmetry_replicate_loops)){
-        all_reps_tf <- paste(vals$symmetry_ind, symmetry_side) %in% symmetry_replicate_loops[i]
-        symmetry_replicate[all_reps_tf] <- 1:length(which(all_reps_tf == T))
-      }
-      vals$symmetry_replicate <- symmetry_replicate
-    }
+    symmetry_land_pairs_file <- as.matrix(symmetry_land_pairs_file)
+    colnames(symmetry_land_pairs_file) <- c("Side 1", "Side 2")
+    vals$go_show_landmark_assignments <- "go"
     
-    if(is.null(vals$symmetry_ind)){
-      symmetry_ind <- rep(NA, dim(gpa_coords_rx())[3])
-    } else {symmetry_ind <-vals$symmetry_ind }
-    if(is.null(vals$symmetry_replicate)){
-      symmetry_replicate <- rep(NA, dim(gpa_coords_rx())[3])
-    } else {symmetry_replicate <-vals$symmetry_replicate }
-    
-    
-    symmetry_definitions <- cbind(symmetry_ind, symmetry_replicate, vals$symmetry_side)
-    colnames(symmetry_definitions)<- c( "Individual", "Replicate", "Side")
-    row.names(symmetry_definitions) <- dimnames(gpa_coords_rx())[[3]]
-    
-    updateMatrixInput(session, "symmetry_definitions", value = symmetry_definitions)
-    
-  })
-  
-  tryObserveEvent(input$symmetry_file_upload, ignoreInit = T, {
-    req(gpa_coords_rx())
-    inFile <- input$symmetry_file_upload
-    if (endsWith(inFile$name, '.xlsx') | endsWith(inFile$name, '.xls')| 
-        endsWith(inFile$name, '.XLSX') | endsWith(inFile$name, '.XLS')){
-      symmetry_file <- readxl::read_excel(inFile$datapath)
-    } else if (endsWith(inFile$name, '.csv') | endsWith(inFile$name, '.CSV')){
-      symmetry_file <- read.csv(inFile$datapath) # read in trait file (this cant be from the trait_rx or else the reactives become circular)
-    } 
-    symmetry_file <- as.data.frame(symmetry_file)
-    if(ncol(symmetry_file) != 4) {
+    if(ncol(symmetry_land_pairs_file) != 2) { 
       shinyalert(
         title = "Incorrect File Format",
         text = "The file you have chosen is not in the correct format. 
-          This file must have 4 columns with columns for the specimen ID 
-          and numerical assignments for Individual, Replicate, and Side for each specimen (in that order). ",
-        type = "error"
+        For Landmark Side Assignments, the file must have 2 columns: 1 for each side of the paired landmarks.",
+        type = "error",
+        html = T
       )
     } else {
-      if(anyNA(match(dimnames(gpa_coords_rx())[[3]], symmetry_file[,1]))) {
+      landpair_vec <- as.factor(symmetry_land_pairs_file)
+      if(length(landpair_vec) != length(unique(landpair_vec))) {
         shinyalert(
-          title = "Mismatch in Specimen Names",
-          text = "The first column in the uploaded file does not match the names of the specimens in the shape dataset.",
+          title = "Repeated Landmark",
+          text = "One of the landmarks is repeated in the uploaded matrix. Please fix 
+          this manually before applying the symmetry analyses.",
+          type = "warning",
+          html = T
+        )
+      } 
+      if(any(!(landpair_vec %in% 1:dim(gpa_coords_rx())[1]))) {
+        shinyalert(
+          title = "Mislabeled Landmark",
+          text = "One of the landmark numbers does not match the landmarks available.
+          Either the numeric value is higher than the number of landmarks in the dataset or 
+          some other character type is in the matrix. Please fix 
+          this manually before applying the symmetry analyses.",
+          type = "warning",
+          html = T
+        )
+      }
+      updateMatrixInput(session, "symmetry_landpairs_definitions",
+                        value = symmetry_land_pairs_file)
+    }
+    
+  })
+  
+  tryObserveEvent(input$go_symmetry_landpairs_manual, ignoreInit = T, priority = 10, {
+    vals$go_symmetry_landmark_file <- NULL
+    vals$go_show_landmark_assignments <- "go"
+    updateMatrixInput(session, "symmetry_landpairs_definitions",
+                      value = symmetry_landpairs_manual_matrix)
+  })
+  
+  tryObserveEvent(input$go_symmetry_useoutput, ignoreInit = T, {
+    vals$lms_rx <- vals$bilat_symmetry$symm.shape 
+  })
+  
+  tryObserveEvent(input$go_asymmetry_useoutput, ignoreInit = T, {
+    vals$lms_rx <- vals$bilat_symmetry$asymm.shape 
+  })
+  
+  tryObserveEvent(input$run_symmetry_go, ignoreInit = T, {
+    vals$run_symmetry_go <- input$run_symmetry_go
+  })
+  
+  tryObserveEvent(vals$run_symmetry_go, ignoreInit = T, {
+    if(!is.null(vals$run_symmetry_go)) {
+      req(gpa_coords_rx())
+      
+      sym_def_df <- as.data.frame(input$symmetry_definitions)
+      symmetry_replicate <- sym_def_df$Rep
+      symmetry_replicate <- symmetry_replicate[-which(symmetry_replicate == "")]
+      symmetry_ind <- sym_def_df$Indiv
+      symmetry_ind <- symmetry_ind[-which(symmetry_ind == "")]
+      
+      if(sym_def_df[nrow(sym_def_df),1] == "") { sym_def_df <- sym_def_df[-nrow(sym_def_df),]}
+      
+      error1 <- length(symmetry_ind)/dim(gpa_coords_rx())[3] != round(length(symmetry_ind)/dim(gpa_coords_rx())[3])
+      if(input$symmetry_obj_sym) {
+        error2_df <- paste(sym_def_df$Indiv, sym_def_df$Rep)
+        error2 <- length(unique(error2_df)) != length(error2_df)
+      } else {
+        error2_df <- paste(sym_def_df$Indiv, sym_def_df$Rep, sym_def_df$Side)
+        error2 <- length(unique(error2_df)) != length(error2_df)
+      }
+      error3 <- anyNA(match(dimnames(gpa_coords_rx())[[3]], rownames(sym_def_df)))
+      error4 <- anyNA(match(rownames(sym_def_df), dimnames(gpa_coords_rx())[[3]]))
+      
+      if(any(error1, error2, error3, error4)) {
+        shinyalert(
+          title = "Error in Specimen Assignments",
+          text = "Some component of the specimen assignment data is in the incorrect format. If your
+          dataset contains no replicates, you must pressed said button before running the symmetry analyses. 
+          Otherwise, check the Specimen Assignments matrix for errors. <br><br>Some common issues are improperly 
+          labeling replicates within each individual, leaving some values blank, or a mismatch between the row names
+          and the labels for the shape dataset.",
+          html= T,
           type = "error"
         )
       } else {
-        symmetry_file <- symmetry_file[match(dimnames(gpa_coords_rx())[[3]], symmetry_file[,1]), ]
-        vals$symmetry_ind <- symmetry_file[,2]
-        vals$symmetry_replicate <- symmetry_file[,3]
-        vals$symmetry_side <- symmetry_file[,4]
-        updateMatrixInput(session, "symmetry_definitions", value = symmetry_file)
+        
+        if(input$symmetry_obj_sym == F) {
+          symmetry_side <- sym_def_df$Side
+          
+          gdf <- geomorph.data.frame(shape = gpa_coords_rx(), 
+                                     ind = symmetry_ind, 
+                                     side = symmetry_side,
+                                     replicate = symmetry_replicate)
+        } else { 
+          side <- NULL
+          
+          gdf <- geomorph.data.frame(shape = gpa_coords_rx(),
+                                     ind = symmetry_ind, 
+                                     replicate = symmetry_replicate)
+          
+          symmetry_land_pairs <- isolate(input$symmetry_landpairs_definitions)
+          symmetry_land_pairs[,1] <- as.numeric(symmetry_land_pairs[,1])
+          symmetry_land_pairs[,2] <- as.numeric(symmetry_land_pairs[,2])
+          symmetry_land_pairs <- symmetry_land_pairs[complete.cases(symmetry_land_pairs),]
+          symmetry_land_pairs <- matrix(symmetry_land_pairs, ncol = 2)
+        }
+        
+        
+        
+        if(input$symmetry_obj_sym == F) {
+          error1 <- any(!(c(1,2) %in% symmetry_side))
+          error2 <- any(!(symmetry_side %in% c(1,2)))
+          error3 <- length(symmetry_side) != length(symmetry_ind)
+          
+          if(any(error1, error2, error3)) {
+            shinyalert(
+              title = "Error in Side Assignments",
+              text = "Some component of the side assignment data is in the incorrect format. Some possible errors include:
+  labeling a specimen with any label other than '1' or '2', an incomplete Specimen Assignments matrix, 
+  or not assigning any specimens to one of the sides.",
+              html= T,
+              type = "error"
+            )
+          } else {
+            
+            if(input$raw_lms_already_aligned == F) { 
+              vals$bilat_symmetry <- bilat.symmetry(A = vals$Data_gpa, 
+                                                    ind = ind, 
+                                                    side = side, 
+                                                    replicate = replicate, 
+                                                    land.pairs = symmetry_land_pairs,
+                                                    object.sym = as.logical(input$symmetry_obj_sym), 
+                                                    iter = as.numeric(isolate(input$symmetry_perm)), 
+                                                    data = gdf,
+                                                    print.progress = F)
+            } else { vals$bilat_symmetry <- bilat.symmetry(A = shape, 
+                                                           ind = ind, 
+                                                           side = side, 
+                                                           replicate = replicate, 
+                                                           land.pairs = symmetry_land_pairs,
+                                                           object.sym = as.logical(input$symmetry_obj_sym), 
+                                                           iter = as.numeric(isolate(input$symmetry_perm)), 
+                                                           data = gdf,
+                                                           print.progress = F) }
+            
+          }
+        } else {
+          symmetry_land_pairs_fac <- as.factor(symmetry_land_pairs)
+          error1 <- length(symmetry_land_pairs_fac)/2 != round(length(symmetry_land_pairs_fac)/2)
+          error2 <- any(!(symmetry_land_pairs_fac %in% 1:dim(gpa_coords_rx())[1]))
+          error3 <- length(symmetry_land_pairs_fac) != length(unique(symmetry_land_pairs_fac))
+          if(any(error1, error2, error3)) {
+            shinyalert(
+              title = "Error in Landmark Side Assignments",
+              text = "Some component of the landmark side assignment data is in the incorrect format. 
+              Some possible errors include: a landmark number not available in the dataset assigned to either side (e.g., 
+              LM 14 assigned to Side 1 when only 11 LMs exist), a landmark is repeated in the Landmark Side Assignments matrix,
+              or one or more landmarks does not have a matched landmark on the other side.",
+              html= T,
+              type = "error"
+            )
+          } else {
+            
+            if(input$raw_lms_already_aligned == F) { 
+              vals$bilat_symmetry <- bilat.symmetry(A = vals$Data_gpa, 
+                                                    ind = ind, 
+                                                    side = side, 
+                                                    replicate = replicate, 
+                                                    land.pairs = symmetry_land_pairs,
+                                                    object.sym = as.logical(input$symmetry_obj_sym), 
+                                                    iter = as.numeric(isolate(input$symmetry_perm)), 
+                                                    data = gdf,
+                                                    print.progress = F)
+            } else {
+              vals$bilat_symmetry <- bilat.symmetry(A = shape, 
+                                                    ind = ind, 
+                                                    side = side, 
+                                                    replicate = replicate, 
+                                                    land.pairs = symmetry_land_pairs,
+                                                    object.sym = as.logical(input$symmetry_obj_sym), 
+                                                    iter = as.numeric(isolate(input$symmetry_perm)), 
+                                                    data = gdf,
+                                                    print.progress = F)
+            }
+          } 
+        }
       }
     }
+    else { vals$bilat_symmetry <- NULL }
   })
-  
-  #tryObserveEvent(input$go_symmetry_useoutput, ignoreInit = T, {
-  # vals$lms_rx <- vals$bilat_symmetry$symm.shape # not this
-  #})
-  
   
   #### Input Data Reactives ####
   
@@ -2352,16 +2529,54 @@ server <- function(input, output, session) {
   lms_rx <- reactive({ # landmark reactive element
     dd <- input$go_remove_outlier_specimen_reset #trigger dddd
     if(is.null(vals$go_example_1)){ # if the user is NOT using the sample pleth data
+      if(input$shape_input_tps == "TPS") { # if the user selects "TPS" as shape file type
+        req(input$file_tps) # stop running this reactive if there is no input tps file selected
+        inFile <- input$file_tps
+        if (endsWith(inFile$name, '.nts')){
+          temp_LMs <- readland.nts(inFile$datapath)
+        } else if (endsWith(inFile$name, '.shapes')){
+          temp_LMs <- readland.shapes(inFile$datapath)
+        } else if (endsWith(inFile$name, '.tps') | endsWith(inFile$name, '.TPS')){
+          temp_LMs <- readland.tps(inFile$datapath, specID = input$spec_id, negNA = input$neg_lms) # read in the tps data with options
+        }}
+    } 
+    if(input$shape_input_tps == "StereoMorph") {
+      req(input$file_stereomorph)
+      inFile <- input$file_stereomorph
       
-      req(input$file_tps) # stop running this reactive if there is no input tps file selected
-      inFile <- input$file_tps
-      if (endsWith(inFile$name, '.nts')){
-        temp_LMs <- readland.nts(inFile$datapath)
-      } else if (endsWith(inFile$name, '.shapes')){
-        temp_LMs <- readland.shapes(inFile$datapath)
-      } else if (endsWith(inFile$name, '.tps') | endsWith(inFile$name, '.TPS')){
-        temp_LMs <- readland.tps(inFile$datapath, specID = input$spec_id, negNA = input$neg_lms) # read in the tps data with options
-      }}
+      shapes <- readShapes(inFile$datapath)
+      vals$file_stereomorph_shape_curven <- length(shapes$curves.control[[1]])
+      
+      if(length(shapes$curves.control[[1]]) > 0) { # if there are curves
+        curve_n_vec <- c(input$stereomorph_curve1_n, input$stereomorph_curve2_n, # create a vector the length of how many curves there are
+                         input$stereomorph_curve3_n, input$stereomorph_curve4_n,
+                         input$stereomorph_curve5_n, input$stereomorph_curve6_n)[1:length(shapes$curves.control[[1]])]
+      } else {
+        curve_n_vec <- NULL # otherwise replace with NULL
+      }
+      shapesGM <- readland.shapes(shapes, nCurvePts = curve_n_vec, continuous.curve = input$cont_curve) 
+      
+      lms_unlisted <- as.matrix(unlist(shapesGM$landmarks))
+      lm_mat <- matrix(NA, ncol = length(shapesGM$landmarks[[1]]), nrow = length(shapesGM$landmarks))
+      for(i in 1:length(shapesGM$landmarks)) {
+        for(j in 1:nrow(shapesGM$landmarks[[1]])) {
+          for(k in 1:ncol(shapesGM$landmarks[[1]])) {
+            if(k == 2) {  this_col <- (j*2) } else { this_col <- (j*2)-1  }
+            lm_mat[i, this_col] <- shapesGM$landmarks[[i]][j,k]
+          }
+        }
+      }
+      
+      shapearray <- arrayspecs(A = lm_mat, p = length(shapesGM$landmarks[[1]])/2, k = 2)
+      shape_names <- sapply(strsplit(inFile$name, split='.txt', fixed=TRUE), function(x) (x[1]))
+      dimnames(shapearray)[[3]] <- shape_names
+      print(shapearray)
+      temp_LMs <- shapearray
+      #if(anyNA(unlist(shapesGM$landmarks))) { # 
+      #  #shapesGM_missing_estimated <- estimate.missing(shapesGM)
+      #  #names(shapesGM_missing_estimated$landmarks) <- names(shapesGM$landmarks) # this is correct
+      #}
+    }
     if(!is.null(vals$go_example_1)){ 
       
       vals$tps_rx_upload_state <- 'example'
@@ -2399,9 +2614,14 @@ server <- function(input, output, session) {
     }
   })
   
+  tryObserveEvent(input$file_stereomorph, {
+    if(!is.null(input$file_stereomorph)) {
+      vals$tps_rx_upload_state <- 'uploaded'
+    }
+  })
+  
   tryObserveEvent(lms_rx(), ignoreInit = T, {
     req(vals$tps_rx_upload_state)
-    
     if(vals$tps_rx_upload_state == "reset") { 
       vals$lms_rx <- NULL } else { 
         vals$lms_rx <- lms_rx()
@@ -2410,7 +2630,6 @@ server <- function(input, output, session) {
   
   phy_rx <- reactive({ # phylogeny reactive element
     temp_phy <- NULL 
-    dd <- input$go_remove_outlier_specimen_reset #trigger dddd
     if(is.null(vals$go_example_1)){ # if the example button has not been pressed
       if(!is.null(input$file_phy)) {
         inFile <- input$file_phy
@@ -2419,7 +2638,7 @@ server <- function(input, output, session) {
         } else if (endsWith(inFile$name, '.tre')){
           temp_phy <- read.tree(inFile$datapath) # read in the tree
         }
-      } else { return(isolate(vals$phy_rx))}
+      } else { if(!is.null(isolate(vals$phy_rx))) {return(isolate(vals$phy_rx))} }
     }
     if(!is.null(vals$go_example_1)){ 
       vals$phy_rx_upload_state <- "example"
@@ -2439,7 +2658,6 @@ server <- function(input, output, session) {
   tryObserveEvent(input$file_phy, {
     vals$phy_rx_upload_state <- 'uploaded'
   })
-  
   
   tryObserveEvent(phy_rx(), ignoreInit = T, {
     req(vals$phy_rx_upload_state)
@@ -2555,13 +2773,7 @@ server <- function(input, output, session) {
         } 
       }
       
-    } else {
-      #if(!is.null(trait_rx())) { vals$trait_rx <- trait_rx() }
-      #if(!is.null(phy_rx())) { vals$phy_rx <- phy_rx() }
-      #if(!is.null(lms_rx())) { vals$lms_rx <- lms_rx() }
-      
-    }
-    
+    } 
     datasets <- c(!is.null(vals$trait_rx), !is.null(vals$phy_rx), !is.null(vals$lms_rx))
     
     if(length(which(datasets == T)) > 1 & !is.null(vals$go_pruning)) { # if there is more than one trait file
@@ -2844,6 +3056,9 @@ server <- function(input, output, session) {
   output$example_tps_selected <- reactive({return(!is.null(vals$go_example_1))}) # this output allows for appropriate options to be available when using example pleth data
   outputOptions(output, 'example_tps_selected', suspendWhenHidden=FALSE)
   
+  output$stereomorph_curvetotal_n <- reactive({return(vals$file_stereomorph_shape_curven)})
+  outputOptions(output, 'stereomorph_curvetotal_n', suspendWhenHidden=FALSE)
+  
   output$file_tps_selected <- reactive({return(!is.null(vals$lms_rx))}) # output for conditional paneling
   outputOptions(output, 'file_tps_selected', suspendWhenHidden=FALSE) # ??? consolidate all these outputOptions? necessary for suspendWhenHidden?
   
@@ -2880,18 +3095,25 @@ server <- function(input, output, session) {
   output$show_symmetry_file <- reactive({return(!is.null(vals$go_symmetry_file))})
   outputOptions(output, "show_symmetry_file", suspendWhenHidden = F)
   
-  output$symmetry_pattern <- reactive({return(!is.null(vals$go_symmetry_pattern))})
-  outputOptions(output, 'symmetry_pattern', suspendWhenHidden=FALSE)
+  output$show_symmetry_landpairs_file <- reactive({return(!is.null(vals$go_symmetry_landpairs_file))})
+  outputOptions(output, "show_symmetry_landpairs_file", suspendWhenHidden = F)
   
-  output$symmetry_land_pairs_file_input <- reactive({return(!is.null(input$symmetry_land_pairs_file_input))})
-  outputOptions(output, "symmetry_land_pairs_file_input", suspendWhenHidden = F)
-  
-  output$show_symmetry_definitions <- reactive({return(!is.null(vals$go_symmetry_file) | 
-                                                         !is.null(vals$go_symmetry_pattern) | 
-                                                         !is.null(vals$go_show_specimen_assignments))})
+  output$show_symmetry_definitions <- reactive({
+    if(!is.null(vals$go_show_specimen_assignments)) {
+      return(TRUE)} else { return(FALSE) }
+  })
   outputOptions(output, "show_symmetry_definitions", suspendWhenHidden = F)
   
-  output$symmetry_initiated <- reactive({return(input$run_symmetry_go > 0)})
+  output$show_symmetry_landpairs_definitions <- reactive({
+    if(!is.null(vals$go_show_landmark_assignments)) {
+      if(input$symmetry_obj_sym) {
+        return(TRUE)
+      }else { return(FALSE)}
+    } else {return(FALSE)}
+  })
+  outputOptions(output, "show_symmetry_landpairs_definitions", suspendWhenHidden = F)
+  
+  output$symmetry_initiated <- reactive({return(!is.null(vals$run_symmetry_go))})
   outputOptions(output, "symmetry_initiated", suspendWhenHidden = F)
   
   
@@ -2951,30 +3173,30 @@ server <- function(input, output, session) {
   outputOptions(output, 'show_gpa', suspendWhenHidden=FALSE)
   
   output$multiple_terms_selected <- reactive({
-    req(input$dependent_variables)
+    req(input$independent_variables)
     if(!is.null(vals$trigger_trait_order_hide)) {
       if(vals$trigger_trait_order_hide) {
         return(F)
-      } else { return(length(input$dependent_variables) > 1) }
-    } else { return(length(input$dependent_variables) > 1) }
+      } else { return(length(input$independent_variables) > 1) }
+    } else { return(length(input$independent_variables) > 1) }
   })
   outputOptions(output, 'multiple_terms_selected', suspendWhenHidden=FALSE)
   
   output$multiple_terms_selected_model_1 <- reactive({
-    req(input$dependent_variables_model_1)
-    return(length(input$dependent_variables_model_1) > 1)
+    req(input$independent_variables_model_1)
+    return(length(input$independent_variables_model_1) > 1)
   })
   outputOptions(output, 'multiple_terms_selected_model_1', suspendWhenHidden=FALSE)
   
   output$multiple_terms_selected_model_2 <- reactive({
-    req(input$dependent_variables_model_2)
-    return(length(input$dependent_variables_model_2) > 1)
+    req(input$independent_variables_model_2)
+    return(length(input$independent_variables_model_2) > 1)
   })
   outputOptions(output, 'multiple_terms_selected_model_2', suspendWhenHidden=FALSE)
   
   output$multiple_terms_selected_model_3 <- reactive({
-    req(input$dependent_variables_model_3)
-    return(length(input$dependent_variables_model_3) > 1)
+    req(input$independent_variables_model_3)
+    return(length(input$independent_variables_model_3) > 1)
   })
   outputOptions(output, 'multiple_terms_selected_model_3', suspendWhenHidden=FALSE)
   
@@ -3064,7 +3286,7 @@ server <- function(input, output, session) {
     
     reset("pgls_ols")
     reset("trait_pairwise")
-    reset("dependent_variables")
+    reset("independent_variables")
     reset("interactions_included")
     reset("disparity_groups")
     reset("evol_rate_groups")
@@ -3145,22 +3367,15 @@ server <- function(input, output, session) {
     reset("integration_group_level")
     reset("run_symmetry_go")
     reset("symmetry_definitions")
-    reset("symmetry_ind_pattern")
-    reset("symmetry_ind_pattern_no")
-    reset("symmetry_ind_pattern_nth")
-    reset("symmetry_ind_pattern_block")
     reset("symmetry_obj_sym")
-    reset("symmetry_land_pairs_pattern")
     reset("symmetry_land_pairs_file_upload")
     reset("symmetry_land_pairs_file_input")
-    reset("symmetry_side_pattern")
     reset("symmetry_side")
     reset("symmetry_file_upload")
     reset("symmetry_perm")
     
     reset("go_symmetry_useoutput")
     reset("go_symmetry_file")
-    reset("go_symmetry_pattern")
     reset("go_symmetry_manual")
     reset("run_symmetry_go")
     reset("symmetry_replicate")
@@ -3216,14 +3431,14 @@ server <- function(input, output, session) {
     reset("warp_txt_cex")
     reset("warp_txt_col")
     
-    #reset("dependent_variables_order")
+    #reset("independent_variables_order")
     #reset("go_run_model_comparison")
-    reset("dependent_variables_model_1")
-    reset("dependent_variables_order_model_1")
-    reset("dependent_variables_model_2")
-    reset("dependent_variables_order_model_2")
-    reset("dependent_variables_model_3")
-    reset("dependent_variables_order_model_3")
+    reset("independent_variables_model_1")
+    reset("independent_variables_order_model_1")
+    reset("independent_variables_model_2")
+    reset("independent_variables_order_model_2")
+    reset("independent_variables_model_3")
+    reset("independent_variables_order_model_3")
     reset("pgls_ols_model_comparison")
     reset("anova_perm_model_comparison")
     reset("ss_type_model_comparison")
@@ -3727,7 +3942,7 @@ server <- function(input, output, session) {
   
   #### Updating Input Options #####
   
-  tryObserveEvent(input$raw_lms_already_aligned, {
+  tryObserveEvent(input$raw_lms_already_aligned, ignoreInit = T, {
     if(input$raw_lms_already_aligned){
       hideTab(inputId = "tab_dataprep", target = "Generalized Procrustes Alignment")
       if(is.null(alert_vals$already_aligned_csize_done)) {
@@ -3868,9 +4083,9 @@ server <- function(input, output, session) {
     }
   })
   
-  dependent_variables_listen <- reactive({list(vals$trait_rx, gpa_coords_rx(), vals$csize,
-                                               input$trait_1_treatment, input$trait_2_treatment, input$trait_3_treatment)})
-  tryObserveEvent(dependent_variables_listen() , ignoreInit = F, { # this updates the field where you select the color and shape of the tip labels, along with other input items that require the precise name and treatment of the trait data
+  independent_variables_listen <- reactive({list(vals$trait_rx, gpa_coords_rx(), vals$csize,
+                                                 input$trait_1_treatment, input$trait_2_treatment, input$trait_3_treatment)})
+  tryObserveEvent(independent_variables_listen() , ignoreInit = F, { # this updates the field where you select the color and shape of the tip labels, along with other input items that require the precise name and treatment of the trait data
     
     req(gpa_coords_rx())
     
@@ -3896,47 +4111,47 @@ server <- function(input, output, session) {
       }
       vals$trait_names <- choice_list
       
-      dependent_variable_named <- choice_list
-      names(dependent_variable_named) <- all_selected_trait_names
+      independent_variable_named <- choice_list
+      names(independent_variable_named) <- all_selected_trait_names
       
-      if(is.null(isolate(update_vals$dependent_variables_selected))) { 
-        selected_item <- dependent_variable_named[1]
+      if(is.null(isolate(update_vals$independent_variables_selected))) { 
+        selected_item <- independent_variable_named[1]
       } else {
-        selected_item <- isolate(update_vals$dependent_variables_selected)
+        selected_item <- isolate(update_vals$independent_variables_selected)
       }
       
-      updateCheckboxGroupInput(session, "dependent_variables" , 
-                               "Dependent Variables Tested:",
-                               choices = dependent_variable_named, # updating options for all columns available
+      updateCheckboxGroupInput(session, "independent_variables" , 
+                               "Independent Variables Tested:",
+                               choices = independent_variable_named, # updating options for all columns available
                                selected = selected_item, inline = F) 
       
-      if(is.null(isolate(update_vals$dependent_variables_model_1_selected))) { 
-        selected_item <- dependent_variable_named[1]
-      } else { selected_item <- isolate(update_vals$dependent_variables_model_1_selected) }
+      if(is.null(isolate(update_vals$independent_variables_model_1_selected))) { 
+        selected_item <- independent_variable_named[1]
+      } else { selected_item <- isolate(update_vals$independent_variables_model_1_selected) }
       
-      updateCheckboxGroupInput(session, "dependent_variables_model_1" , 
-                               "Dependent Variables Tested in Model 1:",
-                               choices = dependent_variable_named, # updating options for all columns available
+      updateCheckboxGroupInput(session, "independent_variables_model_1" , 
+                               "Independent Variables Tested in Model 1:",
+                               choices = independent_variable_named, # updating options for all columns available
                                selected = selected_item, inline = F) 
       
-      if(is.null(isolate(update_vals$dependent_variables_model_2_selected))) { 
-        selected_item <- dependent_variable_named[1]
+      if(is.null(isolate(update_vals$independent_variables_model_2_selected))) { 
+        selected_item <- independent_variable_named[1]
       } else {
-        selected_item <- isolate(update_vals$dependent_variables_model_2_selected)
+        selected_item <- isolate(update_vals$independent_variables_model_2_selected)
       }
-      updateCheckboxGroupInput(session, "dependent_variables_model_2" , 
-                               "Dependent Variables Tested in Model 2:",
-                               choices = dependent_variable_named, # updating options for all columns available
+      updateCheckboxGroupInput(session, "independent_variables_model_2" , 
+                               "Independent Variables Tested in Model 2:",
+                               choices = independent_variable_named, # updating options for all columns available
                                selected = selected_item, inline = F) 
       
-      if(is.null(isolate(update_vals$dependent_variables_model_3_selected))) { 
-        selected_item <- dependent_variable_named[1]
+      if(is.null(isolate(update_vals$independent_variables_model_3_selected))) { 
+        selected_item <- independent_variable_named[1]
       } else {
-        selected_item <- isolate(update_vals$dependent_variables_model_3_selected)
+        selected_item <- isolate(update_vals$independent_variables_model_3_selected)
       }
-      updateCheckboxGroupInput(session, "dependent_variables_model_3" , 
-                               "Dependent Variables Tested in Model 3:",
-                               choices = dependent_variable_named, # updating options for all columns available
+      updateCheckboxGroupInput(session, "independent_variables_model_3" , 
+                               "Independent Variables Tested in Model 3:",
+                               choices = independent_variable_named, # updating options for all columns available
                                selected = selected_item, inline = F) 
       
       
@@ -3948,7 +4163,7 @@ server <- function(input, output, session) {
         selected_item <- "all_1_col"
       } else { selected_item <- isolate(update_vals$tip_col_category_selected) }
       
-      updateSelectInput(session, inputId = "tip_col_category", label = "Point Color", 
+      updateSelectInput(session, inputId = "tip_col_category", label = "Point Color:", 
                         choices = choice_list_color, selected = selected_item) 
       
       if(!is.null(update_vals$trait_1_treatment_selected)) {
@@ -4007,9 +4222,9 @@ server <- function(input, output, session) {
           selected_item <- choice_list_disc_allcol[1]
         } else { selected_item <- isolate(update_vals$allometry_color_selected) }
         
+        
         updateSelectInput(session, "allometry_color", label = "Color Points:", 
                           choices = choice_list_disc_allcol, selected = selected_item)
-        
         
         
         if(is.null(isolate(update_vals$trajectory_group_selected))) { 
@@ -4017,7 +4232,6 @@ server <- function(input, output, session) {
         } else { selected_item <- isolate(update_vals$trajectory_group_selected) }
         
         updateRadioButtons(session, "trajectory_group", "Group:", choices = choice_list_disc, selected = selected_item)
-        
         
         
         if(length(choice_list_disc) > 1){
@@ -4115,7 +4329,7 @@ server <- function(input, output, session) {
   allometry_predictor_listen <- reactive({list(vals$trait_rx, input$go_run_anova)})
   tryObserveEvent(allometry_predictor_listen(), ignoreInit = F, {
     if(input$go_run_anova > 0) {
-      req(vals$trait_rx)
+      #req(vals$trait_rx)
       
       if(is.null(vals$trait_rx)) { all_selected_trait_names <- NULL } else {
         all_selected_trait_names <- colnames(vals$trait_rx)[-1] # what are the selected column names from trait file
@@ -4123,9 +4337,11 @@ server <- function(input, output, session) {
       
       if(is.null(isolate(vals$csize))) {
         choice_list <- c("by_trait_1", "by_trait_2", "by_trait_3")[1:length(all_selected_trait_names)]
-      } else { if(length(colnames(isolate(vals$trait_rx))[-1]) > 0) {
-        choice_list <- c(c("by_trait_1", "by_trait_2", "by_trait_3")[1:length(colnames(isolate(vals$trait_rx))[-1])], "csize")
-      } else { choice_list <- "csize"}
+      } else { 
+        all_selected_trait_names <- c(all_selected_trait_names, "Centroid Size")
+        if(length(colnames(isolate(vals$trait_rx))[-1]) > 0) {
+          choice_list <- c(c("by_trait_1", "by_trait_2", "by_trait_3")[1:length(colnames(isolate(vals$trait_rx))[-1])], "csize")
+        } else {  choice_list <- "csize" }
       }
       
       selected_cont_options <- (1:length(colnames(vals$trait_rx)[-1]))[c(input$trait_1_treatment == "cont", 
@@ -4135,126 +4351,120 @@ server <- function(input, output, session) {
       choice_list_cont <- choice_list[na.omit(selected_cont_options)]
       names(choice_list_cont) <- all_selected_trait_names[na.omit(selected_cont_options)]
       
-      if(!is.null(isolate(vals$csize))){
-        choice_list_cont <- c(choice_list_cont, "csize")
-        names(choice_list_cont)[length(choice_list_cont)] <- "Centroid Size"
-      } 
-      
-      #if(length(choice_list_cont) > 1) {
       if(is.null(isolate(update_vals$allometry_predictor_selected))) {
         selected_item <- choice_list_cont[1]
+        
       } else { selected_item <- isolate(update_vals$allometry_predictor_selected) }
-      #}
       updateRadioButtons(session, inputId = "allometry_predictor", label = "Predictor Variable:",
                          choices = choice_list_cont, selected = selected_item)
     }
   })
   
-  tryObserveEvent(input$dependent_variables, ignoreInit = F, {
+  tryObserveEvent(input$independent_variables, ignoreInit = F, {
     
-    if(is.null(update_vals$dependent_variables_selected)) {
-      dependent_variables <- input$dependent_variables
-    } else { dependent_variables <- update_vals$dependent_variables_selected}
+    if(is.null(update_vals$independent_variables_selected)) {
+      independent_variables <- input$independent_variables
+    } else { independent_variables <- update_vals$independent_variables_selected}
     
     req(vals$trait_rx)
     col_names_temp <- names(vals$trait_names) # what are the selected column names from trait file
     for(i in 1:length(col_names_temp)) { col_names_temp[i] <- substring(col_names_temp[i], 4, nchar(col_names_temp[i])) } # cutting off "By " at the beginning
-    these_traits <- (1:3)[c("by_trait_1", "by_trait_2", "by_trait_3") %in% dependent_variables]
+    these_traits <- (1:3)[c("by_trait_1", "by_trait_2", "by_trait_3") %in% independent_variables]
     
     traits_selected <- col_names_temp[these_traits]
     
-    if("csize" %in% dependent_variables){
+    if("csize" %in% independent_variables){
       traits_selected <- c(traits_selected, "Centroid Size")
     }
-    if(!is.null(update_vals$dependent_variables_order_selected)) { 
-      traits_selected <- update_vals$dependent_variables_order_selected
+    if(!is.null(update_vals$independent_variables_order_selected)) { 
+      traits_selected <- update_vals$independent_variables_order_selected
     }
     
     if(length(traits_selected)>1) {
       vals$trigger_trait_order_hide <- F
-      updateOrderInput(session, "dependent_variables_order", "Trait Order:", items = traits_selected)
+      updateOrderInput(session, "independent_variables_order", "Trait Order:", items = traits_selected)
     } else { vals$trigger_trait_order_hide <- T }
     
     
   })
   
-  tryObserveEvent(input$dependent_variables_model_1, ignoreInit = F, {
+  tryObserveEvent(input$independent_variables_model_1, ignoreInit = F, {
     
-    if(is.null(update_vals$dependent_variables_model_1_selected)) {
-      dependent_variables <- input$dependent_variables_model_1
-    } else { dependent_variables <- update_vals$dependent_variables_model_1_selected}
+    if(is.null(update_vals$independent_variables_model_1_selected)) {
+      independent_variables <- input$independent_variables_model_1
+    } else { independent_variables <- update_vals$independent_variables_model_1_selected}
     
     req(vals$trait_rx)
     if(input$navbar == "Linear Models") {
       col_names_temp <- names(vals$trait_names) # what are the selected column names from trait file
       for(i in 1:length(col_names_temp)) { col_names_temp[i] <- substring(col_names_temp[i], 4, nchar(col_names_temp[i])) } # cutting off "By " at the beginning
-      these_traits <- (1:3)[c("by_trait_1", "by_trait_2", "by_trait_3") %in% dependent_variables]
+      these_traits <- (1:3)[c("by_trait_1", "by_trait_2", "by_trait_3") %in% independent_variables]
       
       traits_selected <- col_names_temp[these_traits]
       
-      if("csize" %in% dependent_variables){
+      if("csize" %in% independent_variables){
         traits_selected <- list(traits_selected, "Centroid Size")
       }
-      if(!is.null(update_vals$dependent_variables_order_model_1_selected)) { 
-        traits_selected <- update_vals$dependent_variables_order_model_1_selected
+      if(!is.null(update_vals$independent_variables_order_model_1_selected)) { 
+        traits_selected <- update_vals$independent_variables_order_model_1_selected
       }
       
       vals$model_comparison_model_1 <- c(vals$model_comparison_model_1,"go")
-      updateOrderInput(session, "dependent_variables_order_model_1", "Model 1 Trait Order:", items = traits_selected)
+      updateOrderInput(session, "independent_variables_order_model_1", "Model 1 Trait Order:", items = traits_selected)
     }
     
   })
   
-  tryObserveEvent(input$dependent_variables_model_2, ignoreInit = F, {
+  tryObserveEvent(input$independent_variables_model_2, ignoreInit = F, {
     
-    if(is.null(update_vals$dependent_variables_model_2_selected)) {
-      dependent_variables <- input$dependent_variables_model_2
-    } else { dependent_variables <- update_vals$dependent_variables_model_2_selected}
+    if(is.null(update_vals$independent_variables_model_2_selected)) {
+      independent_variables <- input$independent_variables_model_2
+    } else { independent_variables <- update_vals$independent_variables_model_2_selected}
     
     req(vals$trait_rx)
     if(input$navbar == "Linear Models") {
       col_names_temp <- names(vals$trait_names) # what are the selected column names from trait file
       for(i in 1:length(col_names_temp)) { col_names_temp[i] <- substring(col_names_temp[i], 4, nchar(col_names_temp[i])) } # cutting off "By " at the beginning
-      these_traits <- (1:3)[c("by_trait_1", "by_trait_2", "by_trait_3") %in% dependent_variables]
+      these_traits <- (1:3)[c("by_trait_1", "by_trait_2", "by_trait_3") %in% independent_variables]
       
       traits_selected <- col_names_temp[these_traits]
       
-      if("csize" %in% dependent_variables){
+      if("csize" %in% independent_variables){
         traits_selected <- list(traits_selected, "Centroid Size")
       }
-      if(!is.null(update_vals$dependent_variables_order_model_2_selected)) { 
-        traits_selected <- update_vals$dependent_variables_order_model_2_selected
+      if(!is.null(update_vals$independent_variables_order_model_2_selected)) { 
+        traits_selected <- update_vals$independent_variables_order_model_2_selected
       }
       
       vals$model_comparison_model_2 <- c(vals$model_comparison_model_2,"go")
-      updateOrderInput(session, "dependent_variables_order_model_2", "Model 2 Trait Order:", items = traits_selected)
+      updateOrderInput(session, "independent_variables_order_model_2", "Model 2 Trait Order:", items = traits_selected)
     }
     
   })
   
-  tryObserveEvent(input$dependent_variables_model_3, ignoreInit = T, {
+  tryObserveEvent(input$independent_variables_model_3, ignoreInit = T, {
     
-    if(is.null(update_vals$dependent_variables_model_3_selected)) {
-      dependent_variables <- input$dependent_variables_model_3
-    } else { dependent_variables <- update_vals$dependent_variables_model_3_selected}
+    if(is.null(update_vals$independent_variables_model_3_selected)) {
+      independent_variables <- input$independent_variables_model_3
+    } else { independent_variables <- update_vals$independent_variables_model_3_selected}
     
     req(vals$trait_rx)
     if(input$navbar == "Linear Models") {
       col_names_temp <- names(vals$trait_names) # what are the selected column names from trait file
       for(i in 1:length(col_names_temp)) { col_names_temp[i] <- substring(col_names_temp[i], 4, nchar(col_names_temp[i])) } # cutting off "By " at the beginning
-      these_traits <- (1:3)[c("by_trait_1", "by_trait_2", "by_trait_3") %in% dependent_variables]
+      these_traits <- (1:3)[c("by_trait_1", "by_trait_2", "by_trait_3") %in% independent_variables]
       
       traits_selected <- col_names_temp[these_traits]
       
-      if("csize" %in% dependent_variables){
+      if("csize" %in% independent_variables){
         traits_selected <- list(traits_selected, "Centroid Size")
       }
-      if(!is.null(update_vals$dependent_variables_order_model_3_selected)) { 
-        traits_selected <- update_vals$dependent_variables_order_model_3_selected
+      if(!is.null(update_vals$independent_variables_order_model_3_selected)) { 
+        traits_selected <- update_vals$independent_variables_order_model_3_selected
       }
       
       vals$model_comparison_model_3 <- c(vals$model_comparison_model_3,"go")
-      updateOrderInput(session, "dependent_variables_order_model_3", "Model 3 Trait Order:", items = traits_selected)
+      updateOrderInput(session, "independent_variables_order_model_3", "Model 3 Trait Order:", items = traits_selected)
     }
     
   })
@@ -4443,21 +4653,21 @@ server <- function(input, output, session) {
     
   })
   
-  trigger_model_disc_listen <- reactive({list(input$dependent_variables, input$dependent_variables_order,
+  trigger_model_disc_listen <- reactive({list(input$independent_variables, input$independent_variables_order,
                                               input$trait_1_treatment, input$trait_2_treatment, input$trait_3_treatment,
                                               bookmark_vals$adjust_updates)})
   
   tryObserveEvent(trigger_model_disc_listen(), ignoreInit = F, { 
     
-    req(input$dependent_variables)
+    req(input$independent_variables)
     treatments <- c(input$trait_1_treatment, input$trait_2_treatment, input$trait_3_treatment)
     disc_traits <- which(treatments == "disc")
     
     col_names_temp <- colnames(isolate(vals$trait_rx))[-1] # what are the selected column names from trait file
     
-    dependent_variables <- c(input$dependent_variables)
-    if(dependent_variables[1] != "init"){
-      these_traits <- (1:3)[c("by_trait_1", "by_trait_2", "by_trait_3") %in% dependent_variables]
+    independent_variables <- c(input$independent_variables)
+    if(independent_variables[1] != "init"){
+      these_traits <- (1:3)[c("by_trait_1", "by_trait_2", "by_trait_3") %in% independent_variables]
       
       trait_choices <- NULL
       trait_choices <- c("no_run", intersect(these_traits, disc_traits))
@@ -4675,30 +4885,30 @@ server <- function(input, output, session) {
     vals$trait_3_treatment <- input$trait_3_treatment
   })
   
-  go_run_anova_listen <- reactive({list(input$go_run_anova, update_vals$dependent_variables_order_selected)})
+  go_run_anova_listen <- reactive({list(input$go_run_anova, update_vals$independent_variables_order_selected)})
   tryObserveEvent(go_run_anova_listen(), ignoreInit = F, priority = -10, { # suspend necessary because for some reason, (even when using priority) trait_1_treatment was not updated before this ran, causing a problem at the pairwise function
     
-    #req(input$dependent_variables) # keeps things from crashing if all are unselected
-    if(is.null(update_vals$dependent_variables_selected)) {
-      dependent_variables <- input$dependent_variables     
-    } else { dependent_variables <- update_vals$dependent_variables_selected }
+    #req(input$independent_variables) # keeps things from crashing if all are unselected
+    if(is.null(update_vals$independent_variables_selected)) {
+      independent_variables <- input$independent_variables     
+    } else { independent_variables <- update_vals$independent_variables_selected }
     
-    req(dependent_variables)
+    req(independent_variables)
     if(input$go_run_anova>0){
       if(datasets_dont_match() == FALSE) {
-        if(dependent_variables[1] != "init") { # required so that this doesn't try to run before input$dependent_variables has been updated
+        if(independent_variables[1] != "init") { # required so that this doesn't try to run before input$independent_variables has been updated
           
-          if(length(dependent_variables) == 1) {
-            if(dependent_variables == "csize") { model_order <- "By Centroid Size" } else {
-              model_order <- names(vals$trait_names)[c("by_trait_1", "by_trait_2", "by_trait_3") %in% dependent_variables] #   
+          if(length(independent_variables) == 1) {
+            if(independent_variables == "csize") { model_order <- "By Centroid Size" } else {
+              model_order <- names(vals$trait_names)[c("by_trait_1", "by_trait_2", "by_trait_3") %in% independent_variables] #   
             }
             model_order <- substring(model_order, 4, nchar(model_order))
-          } else { model_order <- input$dependent_variables_order }
+          } else { model_order <- input$independent_variables_order }
           
           
           if(model_order[1] != "Trait 1") {
             
-            results <- model_definition(input.dependent_variables = dependent_variables, 
+            results <- model_definition(input.independent_variables = independent_variables, 
                                         vals.trait_rx = vals$trait_rx,
                                         vals.csize = vals$csize, 
                                         vals.trait_1_treatment = vals$trait_1_treatment, 
@@ -4707,35 +4917,35 @@ server <- function(input, output, session) {
                                         vals.trait_names = vals$trait_names, 
                                         vals.phy_rx = vals$phy_rx,
                                         gpa_coords_rx_reactive = gpa_coords_rx(), 
-                                        input.dependent_variables_order = model_order,
+                                        input.independent_variables_order = model_order,
                                         input.pgls_ols = input$pgls_ols, 
                                         input.anova_perm = input$anova_perm, 
                                         input.ss_type = input$ss_type)#, input.interactions_included = input$interactions_included)
             
             vals$fit <- results 
             sum <- summary(results)
-            if(length(dependent_variables) > 1) {
-              row.names(sum$table)[1:length(dependent_variables)] <- input$dependent_variables_order
+            if(length(independent_variables) > 1) {
+              row.names(sum$table)[1:length(independent_variables)] <- input$independent_variables_order
             } else {
               if(is.null(vals$trait_rx)) { row.names(sum$table)[1] <- 'Centroid Size' } else {
                 colnames_var <- colnames(vals$trait_rx)[-1] #  
-                these_traits <- (1:3)[c("by_trait_1", "by_trait_2", "by_trait_3") %in% dependent_variables]
+                these_traits <- (1:3)[c("by_trait_1", "by_trait_2", "by_trait_3") %in% independent_variables]
                 row.names(sum$table)[1] <- colnames_var[these_traits] 
               }
             }
             #   if(input$interactions_included){
             #     ninteractions <- 1
-            #     interaction_names <- paste(input$dependent_variables_order[1],input$dependent_variables_order[2], sep = ":")
-            #     if(length(dependent_variables) > 2) {
+            #     interaction_names <- paste(input$independent_variables_order[1],input$independent_variables_order[2], sep = ":")
+            #     if(length(independent_variables) > 2) {
             #       ninteractions <- 4
             #       interaction_names <- c(interaction_names, 
-            #                              paste(input$dependent_variables_order[1],input$dependent_variables_order[3], sep = ":"),
-            #                              paste(input$dependent_variables_order[2],input$dependent_variables_order[3], sep = ":"),
-            #                              paste(input$dependent_variables_order[1],input$dependent_variables_order[2],
-            #                                    input$dependent_variables_order[3], sep = ":"))
+            #                              paste(input$independent_variables_order[1],input$independent_variables_order[3], sep = ":"),
+            #                              paste(input$independent_variables_order[2],input$independent_variables_order[3], sep = ":"),
+            #                              paste(input$independent_variables_order[1],input$independent_variables_order[2],
+            #                                    input$independent_variables_order[3], sep = ":"))
             #     }
             #     
-            #     row.names(sum$table)[(length(dependent_variables)+1):(length(dependent_variables)+ninteractions)] <- interaction_names
+            #     row.names(sum$table)[(length(independent_variables)+1):(length(independent_variables)+ninteractions)] <- interaction_names
             #   }
             vals$anova_table <-  sum$table
             
@@ -4749,14 +4959,14 @@ server <- function(input, output, session) {
                 trait_1_c <- as.character(vals$trait_rx[,2]) # 
                 trait_1 <- as.numeric(trait_1_c)
               }
-              if("by_trait_2" %in% dependent_variables) {     
+              if("by_trait_2" %in% independent_variables) {     
                 if(vals$trait_2_treatment == "disc") {trait_2 <- as.factor(vals$trait_rx[,3])}
                 if(vals$trait_2_treatment == "cont") {
                   trait_2_c <- as.character(vals$trait_rx[,3]) # 
                   trait_2 <- as.numeric(trait_2_c)
                 } 
               }
-              if("by_trait_3" %in% dependent_variables) {     
+              if("by_trait_3" %in% independent_variables) {     
                 if(vals$trait_3_treatment == "disc") {trait_3 <- as.factor(vals$trait_rx[,4])}
                 if(vals$trait_3_treatment == "cont") {
                   trait_3_c <- as.character(vals$trait_rx[,4]) # 
@@ -4824,44 +5034,44 @@ server <- function(input, output, session) {
     }
   })
   
-  model_comparison_listen <- reactive({list(input$dependent_variables_model_1, input$go_run_model_comparison, input$dependent_variables_order_model_1)})
+  model_comparison_listen <- reactive({list(input$independent_variables_model_1, input$go_run_model_comparison, input$independent_variables_order_model_1)})
   tryObserveEvent(model_comparison_listen(), ignoreInit = F, priority = -10, {
     if(input$go_run_model_comparison > 0) {
-      req(input$dependent_variables_model_1) # keeps things from crashing if all are unselected
-      req(input$dependent_variables_model_2) 
+      req(input$independent_variables_model_1) # keeps things from crashing if all are unselected
+      req(input$independent_variables_model_2) 
       req(vals$trait_rx)
       
-      if(is.null(update_vals$dependent_variables_model_1_selected)) {
-        dependent_variables_model_1 <- input$dependent_variables_model_1  
-        dependent_variables_model_2 <- input$dependent_variables_model_2 
-        dependent_variables_model_3 <- input$dependent_variables_model_3
+      if(is.null(update_vals$independent_variables_model_1_selected)) {
+        independent_variables_model_1 <- input$independent_variables_model_1  
+        independent_variables_model_2 <- input$independent_variables_model_2 
+        independent_variables_model_3 <- input$independent_variables_model_3
       } else { 
-        dependent_variables_model_1 <- update_vals$dependent_variables_model_1_selected
-        dependent_variables_model_2 <- update_vals$dependent_variables_model_2_selected
-        dependent_variables_model_3 <- update_vals$dependent_variables_model_3_selected }
+        independent_variables_model_1 <- update_vals$independent_variables_model_1_selected
+        independent_variables_model_2 <- update_vals$independent_variables_model_2_selected
+        independent_variables_model_3 <- update_vals$independent_variables_model_3_selected }
       
-      if(input$dependent_variables_order_model_1[1] != "Trait 1") {
+      if(input$independent_variables_order_model_1[1] != "Trait 1") {
         if(datasets_dont_match() == FALSE) {
-          if(dependent_variables_model_1[1] != "init" & dependent_variables_model_2[1] != "init") { # required so that this doesn't try to run before input$dependent_variables has been updated
+          if(independent_variables_model_1[1] != "init" & independent_variables_model_2[1] != "init") { # required so that this doesn't try to run before input$independent_variables has been updated
             
-            if(length(dependent_variables_model_1) == 1) {
-              if(dependent_variables_model_1 == "csize") { model_order_1 <- "By Centroid Size" } else {
-                model_order_1 <- names(vals$trait_names)[c("by_trait_1", "by_trait_2", "by_trait_3") %in% dependent_variables_model_1] #   
+            if(length(independent_variables_model_1) == 1) {
+              if(independent_variables_model_1 == "csize") { model_order_1 <- "By Centroid Size" } else {
+                model_order_1 <- names(vals$trait_names)[c("by_trait_1", "by_trait_2", "by_trait_3") %in% independent_variables_model_1] #   
               }
               model_order_1 <- substring(model_order_1, 4, nchar(model_order_1))
-            } else { model_order_1 <- input$dependent_variables_order_model_1 }
+            } else { model_order_1 <- input$independent_variables_order_model_1 }
             
-            if(length(dependent_variables_model_2) == 1) {
-              if(dependent_variables_model_2 == "csize") { model_order_2 <- "By Centroid Size" } else {
-                model_order_2 <- names(vals$trait_names)[c("by_trait_1", "by_trait_2", "by_trait_3") %in% dependent_variables_model_2] #   
+            if(length(independent_variables_model_2) == 1) {
+              if(independent_variables_model_2 == "csize") { model_order_2 <- "By Centroid Size" } else {
+                model_order_2 <- names(vals$trait_names)[c("by_trait_1", "by_trait_2", "by_trait_3") %in% independent_variables_model_2] #   
               }
               model_order_2 <- substring(model_order_2, 4, nchar(model_order_2))
-            } else { model_order_2 <- input$dependent_variables_order_model_2 }
+            } else { model_order_2 <- input$independent_variables_order_model_2 }
             
             
             if(model_order_2[1] != "Trait 1") {
               
-              model_1 <- model_definition(input.dependent_variables = dependent_variables_model_1, 
+              model_1 <- model_definition(input.independent_variables = independent_variables_model_1, 
                                           vals.trait_rx = vals$trait_rx,
                                           vals.csize = vals$csize, 
                                           vals.trait_1_treatment = vals$trait_1_treatment, 
@@ -4870,34 +5080,34 @@ server <- function(input, output, session) {
                                           vals.trait_names = vals$trait_names, 
                                           vals.phy_rx = vals$phy_rx,
                                           gpa_coords_rx_reactive = gpa_coords_rx(), 
-                                          input.dependent_variables_order = model_order_1,
+                                          input.independent_variables_order = model_order_1,
                                           input.pgls_ols = input$pgls_ols_model_comparison, input.anova_perm = input$anova_perm_model_comparison, 
                                           input.ss_type = input$ss_type_model_comparison)#, input.interactions_included = input$interactions_included_model_comparison)
               
-              model_2 <- model_definition(input.dependent_variables = dependent_variables_model_2, 
+              model_2 <- model_definition(input.independent_variables = independent_variables_model_2, 
                                           vals.trait_rx = vals$trait_rx, vals.csize = vals$csize, 
                                           vals.trait_1_treatment = vals$trait_1_treatment, vals.trait_2_treatment = vals$trait_2_treatment,
                                           vals.trait_3_treatment = vals$trait_3_treatment, vals.trait_names = vals$trait_names, 
                                           vals.phy_rx = vals$phy_rx,
                                           gpa_coords_rx_reactive = gpa_coords_rx(), 
-                                          input.dependent_variables_order = model_order_2,
+                                          input.independent_variables_order = model_order_2,
                                           input.pgls_ols = input$pgls_ols_model_comparison, input.anova_perm = input$anova_perm_model_comparison, 
                                           input.ss_type = input$ss_type_model_comparison)#, input.interactions_included = input$interactions_included_model_comparison)
             }
             if(input$add_third_model){
-              if(length(dependent_variables_model_3) == 1) {
-                if(dependent_variables_model_3 == "csize") { model_order_3 <- "By Centroid Size" } else {
-                  model_order_3 <- names(vals$trait_names)[c("by_trait_1", "by_trait_2", "by_trait_3") %in% dependent_variables_model_3] #   
+              if(length(independent_variables_model_3) == 1) {
+                if(independent_variables_model_3 == "csize") { model_order_3 <- "By Centroid Size" } else {
+                  model_order_3 <- names(vals$trait_names)[c("by_trait_1", "by_trait_2", "by_trait_3") %in% independent_variables_model_3] #   
                 }
                 model_order_2 <- substring(model_order_2, 4, nchar(model_order_2))
-              } else { model_order_3 <- input$dependent_variables_order_model_3 }
+              } else { model_order_3 <- input$independent_variables_order_model_3 }
               
-              model_3 <- model_definition(input.dependent_variables = dependent_variables_model_3, 
+              model_3 <- model_definition(input.independent_variables = independent_variables_model_3, 
                                           vals.trait_rx = vals$trait_rx, vals.csize = vals$csize, 
                                           vals.trait_1_treatment = vals$trait_1_treatment, vals.trait_2_treatment = vals$trait_2_treatment,
                                           vals.trait_3_treatment = vals$trait_3_treatment, vals.trait_names = vals$trait_names, 
                                           vals.phy_rx = vals$phy_rx,
-                                          gpa_coords_rx_reactive = gpa_coords_rx(), input.dependent_variables_order = model_order_3,
+                                          gpa_coords_rx_reactive = gpa_coords_rx(), input.independent_variables_order = model_order_3,
                                           input.pgls_ols = input$pgls_ols_model_comparison, input.anova_perm = input$anova_perm_model_comparison, 
                                           input.ss_type = input$ss_type_model_comparison)# , input.interactions_included = input$interactions_included_model_comparison)
             }
@@ -4914,7 +5124,7 @@ server <- function(input, output, session) {
     }
   })
   
-  #  tryObserveEvent(input$dependent_variables, priority = 100, {
+  #  tryObserveEvent(input$independent_variables, priority = 100, {
   #    reset("interactions_included")
   #  })
   
@@ -5581,25 +5791,25 @@ server <- function(input, output, session) {
     name <- "Model Tested: Shape ~ "
     vars <- NULL
     
-    if(is.null(update_vals$dependent_variables_selected)) { dependent_variables <- input$dependent_variables } else {
-      dependent_variables <- update_vals$dependent_variables_selected
+    if(is.null(update_vals$independent_variables_selected)) { independent_variables <- input$independent_variables } else {
+      independent_variables <- update_vals$independent_variables_selected
     }
     
-    if("by_trait_1" %in% dependent_variables) {vars <- c(vars, substring(names(vals$trait_names)[1], 4, nchar(names(vals$trait_names)[1])))}
-    if("by_trait_2" %in% dependent_variables) {vars <- c(vars, substring(names(vals$trait_names)[2], 4, nchar(names(vals$trait_names)[2])))}
-    if("by_trait_3" %in% dependent_variables) {vars <- c(vars, substring(names(vals$trait_names)[3], 4, nchar(names(vals$trait_names)[3])))}
-    if("csize" %in% dependent_variables) {vars <- c(vars, "Centroid Size")}
+    if("by_trait_1" %in% independent_variables) {vars <- c(vars, substring(names(vals$trait_names)[1], 4, nchar(names(vals$trait_names)[1])))}
+    if("by_trait_2" %in% independent_variables) {vars <- c(vars, substring(names(vals$trait_names)[2], 4, nchar(names(vals$trait_names)[2])))}
+    if("by_trait_3" %in% independent_variables) {vars <- c(vars, substring(names(vals$trait_names)[3], 4, nchar(names(vals$trait_names)[3])))}
+    if("csize" %in% independent_variables) {vars <- c(vars, "Centroid Size")}
     
     if(length(vars)>1) { 
-      if(is.null(update_vals$dependent_variables_order_selected)) {
-        vars <- input$dependent_variables_order 
-      } else { vars <- update_vals$dependent_variables_order_selected }
+      if(is.null(update_vals$independent_variables_order_selected)) {
+        vars <- input$independent_variables_order 
+      } else { vars <- update_vals$independent_variables_order_selected }
     }
     #if(input$interactions_included) { # needs to be updated to involve update_vals$___
-    #  if(length(dependent_variables) == 2) {
+    #  if(length(independent_variables) == 2) {
     #    vars <- c(vars, paste(vars[1], vars[2], sep = "*"))
     #  }
-    #  if(length(dependent_variables) == 3) {
+    #  if(length(independent_variables) == 3) {
     #    vars <- c(vars, paste(vars[1], vars[2], sep = "*"), paste(vars[1], vars[3], sep = "*"), paste(vars[2], vars[3], sep = "*"))
     #  }
     #}
@@ -5625,25 +5835,25 @@ server <- function(input, output, session) {
     name <- "Model 1: Shape ~ "
     vars <- NULL
     
-    if(is.null(update_vals$dependent_variables_model_1_selected)) { dependent_variables_model_1 <- input$dependent_variables_model_1 } else {
-      dependent_variables_model_1 <- update_vals$dependent_variables_model_1_selected
+    if(is.null(update_vals$independent_variables_model_1_selected)) { independent_variables_model_1 <- input$independent_variables_model_1 } else {
+      independent_variables_model_1 <- update_vals$independent_variables_model_1_selected
     } 
     
-    if("by_trait_1" %in% dependent_variables_model_1) {vars <- c(vars, substring(names(vals$trait_names)[1], 4, nchar(names(vals$trait_names)[1])))}
-    if("by_trait_2" %in% dependent_variables_model_1) {vars <- c(vars, substring(names(vals$trait_names)[2], 4, nchar(names(vals$trait_names)[2])))}
-    if("by_trait_3" %in% dependent_variables_model_1) {vars <- c(vars, substring(names(vals$trait_names)[3], 4, nchar(names(vals$trait_names)[3])))}
-    if("csize" %in% dependent_variables_model_1) {vars <- c(vars, "Centroid Size")}
+    if("by_trait_1" %in% independent_variables_model_1) {vars <- c(vars, substring(names(vals$trait_names)[1], 4, nchar(names(vals$trait_names)[1])))}
+    if("by_trait_2" %in% independent_variables_model_1) {vars <- c(vars, substring(names(vals$trait_names)[2], 4, nchar(names(vals$trait_names)[2])))}
+    if("by_trait_3" %in% independent_variables_model_1) {vars <- c(vars, substring(names(vals$trait_names)[3], 4, nchar(names(vals$trait_names)[3])))}
+    if("csize" %in% independent_variables_model_1) {vars <- c(vars, "Centroid Size")}
     
     if(length(vars)>1) { 
-      if(is.null(update_vals$dependent_variables_order_model_1_selected)) {
-        vars <- input$dependent_variables_order_model_1 
-      } else { vars <- update_vals$dependent_variables_order_model_1_selected }
+      if(is.null(update_vals$independent_variables_order_model_1_selected)) {
+        vars <- input$independent_variables_order_model_1 
+      } else { vars <- update_vals$independent_variables_order_model_1_selected }
     }
     #if(input$interactions_included) {
-    #  if(length(input$dependent_variables_model_1) == 2) {
+    #  if(length(input$independent_variables_model_1) == 2) {
     #    vars <- c(vars, paste(vars[1], vars[2], sep = "*"))
     #  }
-    #  if(length(input$dependent_variables_model_1) == 3) {
+    #  if(length(input$independent_variables_model_1) == 3) {
     #    vars <- c(vars, paste(vars[1], vars[2], sep = "*"), paste(vars[1], vars[3], sep = "*"), paste(vars[2], vars[3], sep = "*"))
     #  }
     #}
@@ -5661,25 +5871,25 @@ server <- function(input, output, session) {
     name <- "Model 2: Shape ~ "
     vars <- NULL
     
-    if(is.null(update_vals$dependent_variables_model_2_selected)) { dependent_variables_model_2 <- input$dependent_variables_model_2 } else {
-      dependent_variables_model_2 <- update_vals$dependent_variables_model_2_selected
+    if(is.null(update_vals$independent_variables_model_2_selected)) { independent_variables_model_2 <- input$independent_variables_model_2 } else {
+      independent_variables_model_2 <- update_vals$independent_variables_model_2_selected
     } 
     
-    if("by_trait_1" %in% dependent_variables_model_2) {vars <- c(vars, substring(names(vals$trait_names)[1], 4, nchar(names(vals$trait_names)[1])))}
-    if("by_trait_2" %in% dependent_variables_model_2) {vars <- c(vars, substring(names(vals$trait_names)[2], 4, nchar(names(vals$trait_names)[2])))}
-    if("by_trait_3" %in% dependent_variables_model_2) {vars <- c(vars, substring(names(vals$trait_names)[3], 4, nchar(names(vals$trait_names)[3])))}
-    if("csize" %in% dependent_variables_model_2) {vars <- c(vars, "Centroid Size")}
+    if("by_trait_1" %in% independent_variables_model_2) {vars <- c(vars, substring(names(vals$trait_names)[1], 4, nchar(names(vals$trait_names)[1])))}
+    if("by_trait_2" %in% independent_variables_model_2) {vars <- c(vars, substring(names(vals$trait_names)[2], 4, nchar(names(vals$trait_names)[2])))}
+    if("by_trait_3" %in% independent_variables_model_2) {vars <- c(vars, substring(names(vals$trait_names)[3], 4, nchar(names(vals$trait_names)[3])))}
+    if("csize" %in% independent_variables_model_2) {vars <- c(vars, "Centroid Size")}
     
     if(length(vars)>1) { 
-      if(is.null(update_vals$dependent_variables_order_model_2_selected)) {
-        vars <- input$dependent_variables_order_model_2
-      } else { vars <- update_vals$dependent_variables_order_model_2_selected }
+      if(is.null(update_vals$independent_variables_order_model_2_selected)) {
+        vars <- input$independent_variables_order_model_2
+      } else { vars <- update_vals$independent_variables_order_model_2_selected }
     }
     # if(input$interactions_included) {
-    #   if(length(input$dependent_variables_model_2) == 2) {
+    #   if(length(input$independent_variables_model_2) == 2) {
     #     vars <- c(vars, paste(vars[1], vars[2], sep = "*"))
     #   }
-    #   if(length(input$dependent_variables_model_2) == 3) {
+    #   if(length(input$independent_variables_model_2) == 3) {
     #     vars <- c(vars, paste(vars[1], vars[2], sep = "*"), paste(vars[1], vars[3], sep = "*"), paste(vars[2], vars[3], sep = "*"))
     #   }
     # }
@@ -5695,30 +5905,30 @@ server <- function(input, output, session) {
   })
   output$model_comparison_model_3 <- renderText({ # copied from model_tested
     req(vals$trait_rx)
-    req(input$dependent_variables_model_3)
-    if(input$dependent_variables_model_3[1] != "Trait 1") {
+    req(input$independent_variables_model_3)
+    if(input$independent_variables_model_3[1] != "Trait 1") {
       name <- "Model 3: Shape ~ "
       vars <- NULL
       
-      if(is.null(update_vals$dependent_variables_model_3_selected)) { dependent_variables_model_3 <- input$dependent_variables_model_3 } else {
-        dependent_variables_model_3 <- update_vals$dependent_variables_model_3_selected
+      if(is.null(update_vals$independent_variables_model_3_selected)) { independent_variables_model_3 <- input$independent_variables_model_3 } else {
+        independent_variables_model_3 <- update_vals$independent_variables_model_3_selected
       } 
       
-      if("by_trait_1" %in% dependent_variables_model_3) {vars <- c(vars, substring(names(vals$trait_names)[1], 4, nchar(names(vals$trait_names)[1])))}
-      if("by_trait_2" %in% dependent_variables_model_3) {vars <- c(vars, substring(names(vals$trait_names)[2], 4, nchar(names(vals$trait_names)[2])))}
-      if("by_trait_3" %in% dependent_variables_model_3) {vars <- c(vars, substring(names(vals$trait_names)[3], 4, nchar(names(vals$trait_names)[3])))}
-      if("csize" %in% dependent_variables_model_3) {vars <- c(vars, "Centroid Size")}
+      if("by_trait_1" %in% independent_variables_model_3) {vars <- c(vars, substring(names(vals$trait_names)[1], 4, nchar(names(vals$trait_names)[1])))}
+      if("by_trait_2" %in% independent_variables_model_3) {vars <- c(vars, substring(names(vals$trait_names)[2], 4, nchar(names(vals$trait_names)[2])))}
+      if("by_trait_3" %in% independent_variables_model_3) {vars <- c(vars, substring(names(vals$trait_names)[3], 4, nchar(names(vals$trait_names)[3])))}
+      if("csize" %in% independent_variables_model_3) {vars <- c(vars, "Centroid Size")}
       
       if(length(vars)>1) { 
-        if(is.null(isolate(update_vals$dependent_variables_order_model_3_selected))) {
-          vars <- input$dependent_variables_order_model_3
-        } else { vars <- isolate(update_vals$dependent_variables_order_model_3_selected) }
+        if(is.null(isolate(update_vals$independent_variables_order_model_3_selected))) {
+          vars <- input$independent_variables_order_model_3
+        } else { vars <- isolate(update_vals$independent_variables_order_model_3_selected) }
       }
       # if(input$interactions_included) {
-      #   if(length(input$dependent_variables_model_3) == 2) {
+      #   if(length(input$independent_variables_model_3) == 2) {
       #     vars <- c(vars, paste(vars[1], vars[2], sep = "*"))
       #   }
-      #   if(length(input$dependent_variables_model_3) == 3) {
+      #   if(length(input$independent_variables_model_3) == 3) {
       #     vars <- c(vars, paste(vars[1], vars[2], sep = "*"), paste(vars[1], vars[3], sep = "*"), paste(vars[2], vars[3], sep = "*"))
       #   }
       # }
@@ -5734,59 +5944,119 @@ server <- function(input, output, session) {
   })
   
   output$allometry_plot <- renderPlot(bg = "transparent", {
-    req(vals$fit) 
-    req(input$allometry_predictor)
-    this_trait <- (2:5)[c(input$allometry_predictor == "by_trait_1", input$allometry_predictor == "by_trait_2", input$allometry_predictor == "by_trait_3",input$allometry_predictor == "csize" )]
-    if(this_trait == 5) { 
-      if(input$allometry_log_csize) {
-        predictor <- log(vals$csize)
-      } else { predictor <- vals$csize }
-    } else { predictor <- vals$trait_rx[,this_trait] }
-    this_color <- (1:4)[c(input$allometry_color == "all_one_color", input$allometry_color == "by_trait_1", input$allometry_color == "by_trait_2", input$allometry_color == "by_trait_3")]
-    if(this_color == 1) { color <- rep("black", nrow(vals$trait_rx))} else {
-      color <- as.factor(vals$trait_rx[,this_color])
+    
+    if(!is.null(input$allometry_predictor)) {
+      this_trait <- (2:5)[c(input$allometry_predictor == "by_trait_1", input$allometry_predictor == "by_trait_2", input$allometry_predictor == "by_trait_3", input$allometry_predictor == "csize" )]
+      if(this_trait == 5) { 
+        if(input$allometry_log_csize) {
+          predictor <- log(vals$csize)
+        } else { predictor <- vals$csize }
+      } else { predictor <- vals$trait_rx[,this_trait] }
+      this_color <- (1:4)[c(input$allometry_color == "all_one_color", input$allometry_color == "by_trait_1", input$allometry_color == "by_trait_2", input$allometry_color == "by_trait_3")]
+      if(this_color == 1) { color <- rep("black", dim(gpa_coords_rx())[3])} else {
+        color <- as.factor(vals$trait_rx[,this_color])
+      }
+      geomorph:::plot.procD.lm(vals$fit, type = input$allometry_type, reg.type = input$allometry_reg_type, 
+                               logsz = input$allometry_log_csize,
+                               predictor = predictor, col = color, 
+                               pch = 19, cex = as.numeric(input$allometry_pt_size))
     }
-    geomorph:::plot.procD.lm(vals$fit, type = input$allometry_type, reg.type = input$allometry_reg_type, 
-                             logsz = input$allometry_log_csize,
-                             predictor = predictor, col = color, 
-                             pch = 19, cex = as.numeric(input$allometry_pt_size))
     
   })
   
-  #output$allometry_results <- renderText({
-  #  paste("bla bla bla") # this exists in Linear Model
-  #})
+  output$model_trajectory <- renderText({
+    req(vals$trait_rx)
+    
+    if(input$trajectory_group[1] != "Trait 1") {
+      name <- "Model Tested: Shape ~ "
+      vars <- NULL
+      
+      if("by_trait_1" %in% input$trajectory_treatment) {vars <- c(vars, substring(names(vals$trait_names)[1], 4, nchar(names(vals$trait_names)[1])))}
+      if("by_trait_2" %in% input$trajectory_treatment) {vars <- c(vars, substring(names(vals$trait_names)[2], 4, nchar(names(vals$trait_names)[2])))}
+      if("by_trait_3" %in% input$trajectory_treatment) {vars <- c(vars, substring(names(vals$trait_names)[3], 4, nchar(names(vals$trait_names)[3])))}
+      if("by_trait_1" %in% input$trajectory_group) {vars <- c(vars, substring(names(vals$trait_names)[1], 4, nchar(names(vals$trait_names)[1])))}
+      if("by_trait_2" %in% input$trajectory_group) {vars <- c(vars, substring(names(vals$trait_names)[2], 4, nchar(names(vals$trait_names)[2])))}
+      if("by_trait_3" %in% input$trajectory_group) {vars <- c(vars, substring(names(vals$trait_names)[3], 4, nchar(names(vals$trait_names)[3])))}
+      
+      name <- paste(name, vars[1], sep = "")
+      if(length(vars)>1){
+        for (i in 2:length(vars)){
+          name <- paste(name, vars[i], sep = "*")
+        }
+      }
+      name
+    }
+  })
   
-  # output$trajectory_plot <- renderPlot(bg = "transparent", {
-  #   req(vals$TA)
-  #   this_trait <- (2:4)[c(input$trajectory_group == "by_trait_1", input$trajectory_group == "by_trait_2", input$trajectory_group == "by_trait_3")]
-  #   treatment <- as.factor(vals$trait_rx[,this_trait])
-  #   TP <- plot(vals$TA, pch = 19, cex = 0.7, col = as.numeric(larvalMorph$treatment))
-  #   add.trajectories(TP, traj.bg = 1:nlevels(larvalMorph$treatment), 
-  #                    start.bg = 1:nlevels(larvalMorph$treatment),
-  #                    end.bg = 1:nlevels(larvalMorph$treatment))
-  #   
-  # })
-  # 
-  # output$trajectory_results <- renderPrint({
-  #   req(vals$fit)
-  #   #this_group <- (2:4)[c(input$trajectory_group == "by_trait_1", input$trajectory_group == "by_trait_2", input$trajectory_group == "by_trait_3")]
-  #   #treatment <- as.factor(vals$trait_rx[,this_group])
-  #   #this_trait <- (2:4)[c(input$trajectory_trait == "by_trait_1", input$trajectory_trait == "by_trait_2", input$trajectory_trait == "by_trait_3")]
-  #   #group <- as.factor(vals$trait_rx[,this_trait])
-  #   
-  #   data("larvalMorph")
-  #   gdf <- geomorph.data.frame(Y.gpa, treatment = larvalMorph$treatment, 
-  #                              family = larvalMorph$family)
-  #   fit.common <- procD.lm(coords ~ log(Csize) + treatment/family, 
-  #                          data = gdf, print.progress = FALSE)
-  #   
-  #   vals$TA <- trajectory.analysis(fit.common, 
-  #                                  groups = gdf$treatment, 
-  #                                  traj.pts = gdf$family,
-  #                                  pca = TRUE, print.progress = FALSE)
-  #   summary(vals$TA , attribute = "MD")
-  # })
+  trajectory_listen <- reactive({ list(input$trajectory_group, input$trajectory_trait, gpa_coords_rx(), vals$trait_rx)})
+  tryObserveEvent(trajectory_listen(), {
+    req(vals$trait_rx)
+    req(gpa_coords_rx())
+    if(input$trajectory_trait != "none") {
+      this_group <- (2:4)[c(input$trajectory_group == "by_trait_1", input$trajectory_group == "by_trait_2", input$trajectory_group == "by_trait_3")]
+      group <- as.factor(vals$trait_rx[,this_group])
+      this_trait <- (2:4)[c(input$trajectory_trait == "by_trait_1", input$trajectory_trait == "by_trait_2", input$trajectory_trait == "by_trait_3")]
+      trait <- as.factor(vals$trait_rx[,this_trait])
+      if(!is.null(vals$go_example_1)) { # if using the example dataset, you have to adjust the 3 level trait so that there are repeats in all 4 'levels'
+        if(nlevels(group) > 2) { 
+          group[which(group == levels(group)[2])] <- levels(group)[3] # condensing levels for purposes of example
+          group <- droplevels(group)
+        }
+        if(nlevels(trait) > 2) { 
+          trait[which(trait == levels(trait)[2])] <- levels(trait)[3] # condensing levels for purposes of example
+          trait <- droplevels(trait)
+        }
+      }
+      
+      enough_inds_per_group <- min(table(paste(group,trait))) > 1
+      
+      if(enough_inds_per_group) {
+        coords_mat <- two.d.array(gpa_coords_rx())
+        rrppdf <- rrpp.data.frame(coords = coords_mat, trait = trait, group = group)
+        vals$trajectory_fit <- lm.rrpp(coords ~ trait*group, data = rrppdf, iter = 999)
+        vals$TA <- trajectory.analysis(fit, groups = group, traj.pts = trait, print.progress = FALSE)
+      } else {
+        shinyalert(
+          title = "",
+          text = "not enough specimens per group"
+        )
+        vals$trajectory_fit <- NULL
+        vals$TA <- NULL
+      }
+      
+    }
+    
+  })
+  
+  output$trajectory_results <- renderPrint({
+    req(vals$trajectory_fit)
+    
+    paste(reveal.model.designs(vals$trajectory_fit))
+    summary(vals$TA, attribute = input$trajectory_attribute)
+  })
+  
+  output$trajectory_plot <- renderPlot(bg = "transparent", {
+    req(vals$TA)
+    this_group <- (2:4)[c(input$trajectory_group == "by_trait_1", input$trajectory_group == "by_trait_2", input$trajectory_group == "by_trait_3")]
+    group <- as.factor(vals$trait_rx[,this_group])
+    this_trait <- (2:4)[c(input$trajectory_trait == "by_trait_1", input$trajectory_trait == "by_trait_2", input$trajectory_trait == "by_trait_3")]
+    trait <- as.factor(vals$trait_rx[,this_trait])
+    if(!is.null(vals$go_example_1)) { # if using the example dataset, you have to adjust the 3 level trait so that there are repeats in all 4 'levels'
+      if(nlevels(group) > 2) { 
+        group[which(group == levels(group)[2])] <- levels(group)[3] # condensing levels for purposes of example
+        group <- droplevels(group)
+      }
+      if(nlevels(trait) > 2) { 
+        trait[which(trait == levels(trait)[2])] <- levels(trait)[3] # condensing levels for purposes of example
+        trait <- droplevels(trait)
+      }
+    }
+    
+    TP <- plot(vals$TA, pch = group + 20, bg = as.numeric(trait), cex = 0.7, col = "gray")
+    add.trajectories(TP, traj.pch = c(21, 22), start.bg = 1, end.bg = 2)
+    legend("topright", c(levels(group), levels(trait)), pch =  c(21, 22,19,19), col = c("black", "black", "black", "red"), pt.bg = 1)
+    
+  })
   
   output$model_comparison_fit <- renderPrint({
     req(vals$model_comparison)
@@ -5984,34 +6254,56 @@ server <- function(input, output, session) {
     summary(vals$IT)
   })
   
-  output$symmetry_plot <- renderPlot(bg = "transparent", { 
-    if(input$run_symmetry_go > 0) {
-      req(isolate(vals$Data_gpa))
-      
-      full.mat <- as.data.frame(isolate(input$symmetry_definitions)[-nrow(isolate(input$symmetry_definitions)),])
-      
-      vals$symmetry_replicate <- full.mat$Replicate
-      vals$symmetry_ind <- full.mat$Individual
-      vals$symmetry_side <- full.mat$Side
-      
-      if(length(unique(isolate(vals$symmetry_replicate))) != 1){ # if there are replicates
-        symmetry_replicate <- isolate(vals$symmetry_replicate)
+  output$symmetry_landpair_plot <- renderPlot(bg = "transparent", {
+    req(gpa_coords_rx())
+    
+    shape <- mshape(gpa_coords_rx())
+    class(shape) <- "array"
+    
+    symmetry_land_pairs <- as.matrix(input$symmetry_landpairs_definitions)
+    
+    if(!is.null(symmetry_land_pairs)) {
+      lm_col_vec <- rep('black', dim(gpa_coords_rx())[1])
+      lm_pch_vec <- rep('19', dim(gpa_coords_rx())[1])
+      if(nrow(symmetry_land_pairs) > 2) {
+        ncolors <- floor(dim(gpa_coords_rx())[1]/2)
+        if(ncolors < 12) {
+          col_spec <- c("red", brewer.pal(name = "Spectral", n = ncolors)[-1])
+        } else { col_spec <- colorRampPalette(colors = c("red", "blue", "darkgreen", "grey60"), alpha = TRUE)(ncolors) }
+        
+        pch_spec <- c('15', '17')
+        
+        for(i in 1:nrow(symmetry_land_pairs)) {
+          lm_col_vec[as.numeric(symmetry_land_pairs[i,])] <- col_spec[i]
+        }
+        for(i in 1:ncol(symmetry_land_pairs)){
+          lm_pch_vec[as.numeric(symmetry_land_pairs[,i])] <- pch_spec[i]
+        }
       } else {
-        symmetry_replicate <- NULL
+        lm_col_vec[as.numeric(symmetry_land_pairs[1,])] <- "red"
+        lm_pch_vec[as.numeric(symmetry_land_pairs[,1])] <- "15"
+        lm_pch_vec[as.numeric(symmetry_land_pairs[,2])] <- "17"
       }
-      
-      vals$bilat_symmetry <- bilat.symmetry(A = isolate(vals$Data_gpa), 
-                                            ind = isolate(vals$symmetry_ind), 
-                                            side = isolate(vals$symmetry_side), 
-                                            replicate = symmetry_replicate, 
-                                            land.pairs = isolate(vals$symmetry_land_pairs),
-                                            object.sym = as.logical(input$symmetry_obj_sym), 
-                                            iter = as.numeric(isolate(input$symmetry_perm)), 
-                                            print.progress = F)
-      
-      plot(vals$bilat_symmetry)
-      
+    } else { 
+      lm_col_vec <- "black"
+      lm_pch_vec <- '19'
     }
+    
+    plot(shape, col = lm_col_vec, pch = as.numeric(lm_pch_vec), cex = 2, asp = 1, axes = F, xlab = "", ylab = "") # displays the selected specimen landmark placement
+    text(x = shape[,1]-0.01, y = shape[,2] - 0.01, labels = 1:(nrow(shape))) # adds labels to the landmarks
+    if(!is.null(vals$links_df)){
+      for (i in 1:nrow(vals$links_df)) {
+        seg_df <- shape
+        xys <- seg_df[vals$links_df[i,],]
+        segments(x0 = xys[1], y0 = xys[3],x1 = xys[2], y1 = xys[4])
+      }
+    }
+    
+  })
+  
+  output$symmetry_plot <- renderPlot(bg = "transparent", { 
+    req(vals$bilat_symmetry)
+    plot(vals$bilat_symmetry)
   })
   
   output$symmetry_results <- renderPrint({
@@ -6022,6 +6314,18 @@ server <- function(input, output, session) {
   #### Exports ####
   
   # ??? fix so that plot rendering is not redundant. possible with ggplot, unsure otherwise.
+  
+  output$export_all_data <- downloadHandler(
+    filename = function() { paste('all_data.RData') },
+    content = function(file) {
+      phy_rx <- phy_rx()
+      gpa_coords_rx <- gpa_coords_rx()
+      trait_rx <- trait_rx()
+      pruning_script <- pruning_script_function(vals$lms_rx, vals$phy_rx, vals$trait_rx, vals$outlier_removed_names) 
+      save(gpa_coords_rx, phy_rx, trait_rx,  file = file)
+      write.table(pruning_script, file = "~/Downloads/pruning_script.R")
+    }
+  )
   
   output$export_aligned_lms <- downloadHandler( 
     filename = function() {paste('lms_aligned.tps')},
@@ -6255,35 +6559,80 @@ server <- function(input, output, session) {
   output$export_symmetry_plot <- downloadHandler(
     filename = function() { paste("symmetry_plot.pdf")},
     content = function(file) {
+      pdf(file, width = 18, height = 13)
+      req(vals$bilat_symmetry)
+      plot(vals$bilat_symmetry)
+      dev.off()
       
-      if(input$run_symmetry_go > 0) {
-        req(isolate(vals$Data_gpa))
-        pdf(file, width = 18, height = 13)
-        full.mat <- as.data.frame(isolate(input$symmetry_definitions)[-nrow(isolate(input$symmetry_definitions)),])
-        
-        vals$symmetry_replicate <- full.mat$Replicate
-        vals$symmetry_ind <- full.mat$Individual
-        vals$symmetry_side <- full.mat$Side
-        
-        if(length(unique(isolate(vals$symmetry_replicate))) != 1){ # if there are replicates
-          symmetry_replicate <- isolate(vals$symmetry_replicate)
-        } else {
-          symmetry_replicate <- NULL
-        }
-        
-        vals$bilat_symmetry <- bilat.symmetry(A = isolate(vals$Data_gpa), 
-                                              ind = isolate(vals$symmetry_ind), 
-                                              side = isolate(vals$symmetry_side), 
-                                              replicate = symmetry_replicate, 
-                                              land.pairs = isolate(vals$symmetry_land_pairs),
-                                              object.sym = as.logical(input$symmetry_obj_sym), 
-                                              iter = as.numeric(isolate(input$symmetry_perm)), 
-                                              print.progress = F)
-        
-        plot(vals$bilat_symmetry)
-        dev.off()
-        
+    }
+  )
+  
+  output$export_symmetry_tables <- downloadHandler(
+    filename = function() { paste("symmetry_anova_table.csv")},
+    content = function(file) {
+      req(vals$bilat_symmetry)
+      sum <- summary(vals$bilat_symmetry)
+      table <- sum$shape.anova
+      if(!is.null(sum$size.anova)) {
+        table <-  rbind(NA, table, NA, NA, sum$size.anova)
+        rownames(table)[1] <- "Shape ANOVA"
+        rownames(table)[nrow(sum$shape.anova)+3] <- "Centroid Size ANOVA"
       }
+      write.csv(table, file)
+    }
+  )
+  
+  output$export_symmetry_landpairs_plot <- downloadHandler(
+    filename = function() { paste("symmetry_landpairs_plot.pdf")},
+    content = function(file) {
+      pdf(file, width = 10, height = 6)
+      req(gpa_coords_rx())
+      req(input$symmetry_landpairs_definitions)
+      
+      shape <- mshape(gpa_coords_rx())
+      class(shape) <- "array"
+      
+      symmetry_land_pairs <- as.matrix(input$symmetry_landpairs_definitions)
+      
+      if(!is.null(symmetry_land_pairs)) {
+        lm_col_vec <- rep('black', dim(gpa_coords_rx())[1])
+        lm_pch_vec <- rep('19', dim(gpa_coords_rx())[1])
+        if(nrow(symmetry_land_pairs) > 2) {
+          ncolors <- floor(dim(gpa_coords_rx())[1]/2) + 1
+          if(ncolors < 12) {
+            col_spec <- c("red", brewer.pal(name = "Spectral", n = ncolors)[-1])
+          } else { col_spec <- colorRampPalette(colors = c("red", "blue"), alpha = TRUE)(ncolors) }
+          
+          pch_spec <- c('15', '17')
+          
+          for(i in 1:nrow(symmetry_land_pairs)) {
+            lm_col_vec[as.numeric(symmetry_land_pairs[i,])] <- col_spec[i]
+          }
+          for(i in 1:ncol(symmetry_land_pairs)){
+            lm_pch_vec[as.numeric(symmetry_land_pairs[,i])] <- pch_spec[i]
+          }
+        } else {
+          lm_col_vec[as.numeric(symmetry_land_pairs[1,])] <- "red"
+          lm_pch_vec[as.numeric(symmetry_land_pairs[,1])] <- "15"
+          lm_pch_vec[as.numeric(symmetry_land_pairs[,2])] <- "17"
+        }
+      } else { 
+        lm_col_vec <- "black"
+        lm_pch_vec <- '19'
+      }
+      
+      plot(shape, col = lm_col_vec, pch = as.numeric(lm_pch_vec), cex = 2, asp = 1, axes = F, xlab = "", ylab = "") # displays the selected specimen landmark placement
+      text(x = shape[,1]-0.01, y = shape[,2] - 0.01, labels = 1:(nrow(shape))) # adds labels to the landmarks
+      if(!is.null(vals$links_df)){
+        for (i in 1:nrow(vals$links_df)) {
+          seg_df <- shape
+          xys <- seg_df[vals$links_df[i,],]
+          segments(x0 = xys[1], y0 = xys[3],x1 = xys[2], y1 = xys[4])
+        }
+      }
+      
+      dev.off()
+      
     }
   )
   
@@ -6671,25 +7020,28 @@ server <- function(input, output, session) {
   output$export_allometry_plot <- downloadHandler(
     filename = function() { paste("allometry_plot.pdf") },
     content = function(file) { 
-      
-      pdf(file, width = 10, height = 6, pointsize = 8)
-      req(vals$fit) 
-      req(input$allometry_predictor)
-      this_trait <- (2:5)[c(input$allometry_predictor == "by_trait_1", input$allometry_predictor == "by_trait_2", input$allometry_predictor == "by_trait_3",input$allometry_predictor == "csize" )]
-      if(this_trait == 5) { 
-        if(input$allometry_log_csize) {
-          predictor <- log(vals$csize)
-        } else { predictor <- vals$csize }
-      } else { predictor <- vals$trait_rx[,this_trait] }
-      this_color <- (1:4)[c(input$allometry_color == "all_one_color", input$allometry_color == "by_trait_1", input$allometry_color == "by_trait_2", input$allometry_color == "by_trait_3")]
-      if(this_color == 1) { color <- rep("black", nrow(vals$trait_rx))} else {
-        color <- as.factor(vals$trait_rx[,this_color])
+      if(!is.null(input$allometry_predictor)) {
+        pdf(file, width = 10, height = 6, pointsize = 8)
+        req(vals$fit) 
+        
+        
+        this_trait <- (2:5)[c(input$allometry_predictor == "by_trait_1", input$allometry_predictor == "by_trait_2", input$allometry_predictor == "by_trait_3", input$allometry_predictor == "csize" )]
+        if(this_trait == 5) { 
+          if(input$allometry_log_csize) {
+            predictor <- log(vals$csize)
+          } else { predictor <- vals$csize }
+        } else { predictor <- vals$trait_rx[,this_trait] }
+        this_color <- (1:4)[c(input$allometry_color == "all_one_color", input$allometry_color == "by_trait_1", input$allometry_color == "by_trait_2", input$allometry_color == "by_trait_3")]
+        if(this_color == 1) { color <- rep("black", dim(gpa_coords_rx())[3])} else {
+          color <- as.factor(vals$trait_rx[,this_color])
+        }
+        geomorph:::plot.procD.lm(vals$fit, type = input$allometry_type, reg.type = input$allometry_reg_type, 
+                                 logsz = input$allometry_log_csize,
+                                 predictor = predictor, col = color, 
+                                 pch = 19, cex = as.numeric(input$allometry_pt_size))
+        
+        dev.off()
       }
-      
-      geomorph:::plot.procD.lm(vals$fit, type = input$allometry_type, reg.type = input$allometry_reg_type, 
-                               logsz = input$allometry_log_csize,
-                               predictor = predictor, col = color, pch = 19, cex = as.numeric(input$allometry_pt_size))
-      dev.off()
     }
     
   )
@@ -6749,13 +7101,13 @@ server <- function(input, output, session) {
     update_vals$pgls_ols_selected <- input$pgls_ols
     update_vals$outlier_group_level_plotted_selected <- input$outlier_group_level_plotted
     update_vals$outlier_group_tf_selected <- input$outlier_group_tf
-    update_vals$dependent_variables_selected <- input$dependent_variables
-    update_vals$dependent_variables_model_1_selected <- input$dependent_variables_model_1 
-    update_vals$dependent_variables_model_2_selected <- input$dependent_variables_model_2
-    update_vals$dependent_variables_model_3_selected <- input$dependent_variables_model_3
-    update_vals$dependent_variables_order_model_1_selected <- input$dependent_variables_order_model_1 
-    update_vals$dependent_variables_order_model_2_selected <- input$dependent_variables_order_model_2
-    update_vals$dependent_variables_order_model_3_selected <- input$dependent_variables_order_model_3
+    update_vals$independent_variables_selected <- input$independent_variables
+    update_vals$independent_variables_model_1_selected <- input$independent_variables_model_1 
+    update_vals$independent_variables_model_2_selected <- input$independent_variables_model_2
+    update_vals$independent_variables_model_3_selected <- input$independent_variables_model_3
+    update_vals$independent_variables_order_model_1_selected <- input$independent_variables_order_model_1 
+    update_vals$independent_variables_order_model_2_selected <- input$independent_variables_order_model_2
+    update_vals$independent_variables_order_model_3_selected <- input$independent_variables_order_model_3
     update_vals$tip_col_category_selected <- input$tip_col_category
     update_vals$outlier_group_selected <- input$outlier_group
     update_vals$remove_outlier_specimen_selected <- input$remove_outlier_specimen
@@ -6769,7 +7121,7 @@ server <- function(input, output, session) {
     update_vals$show_convex_hull_3_selected <- input$show_convex_hull_3
     update_vals$phy_signal_input_selected <- input$phy_signal_input
     update_vals$allometry_predictor_selected <- input$allometry_predictor
-    update_vals$dependent_variables_order_selected <- input$dependent_variables_order
+    update_vals$independent_variables_order_selected <- input$independent_variables_order
     update_vals$modularity_group_1_selected <- input$modularity_group_1
     update_vals$modularity_group_2_selected <- input$modularity_group_2
     update_vals$modularity_group_3_selected <- input$modularity_group_3
@@ -6798,6 +7150,8 @@ server <- function(input, output, session) {
     update_vals$go_run_gpa_selected <- input$go_run_gpa
     update_vals$outlier_selected_selected <- vals$outlier_row
     update_vals$morphospace_specimen_click_selected <- vals$specimen_row_targ
+    update_vals$symmetry_definitions_selected <- input$symmetry_definitions
+    update_vals$symmetry_landpairs_definitions_selected <- input$symmetry_landpairs_definitions
     
     state$values$update_vals <- update_vals
     
@@ -6865,6 +7219,13 @@ server <- function(input, output, session) {
     vals$col_names_temp <- state$values$vals$col_names_temp
     vals$trait_column_max_value <- state$values$vals$trait_column_max_value
     vals$go_pruning <- state$values$vals$go_pruning
+    vals$go_symmetry_file <-  state$values$vals$go_symmetry_file
+    vals$go_symmetry_landpairs_file <- state$values$vals$go_symmetry_landpairs_file
+    vals$go_show_specimen_assignments <- state$values$vals$go_show_specimen_assignments
+    vals$go_show_landmark_assignments <- state$values$vals$go_show_landmark_assignments
+    vals$go_symmetry_landmark_file <- state$values$vals$go_symmetry_landmark_file
+    vals$run_symmetry_go <- state$values$vals$run_symmetry_go
+    vals$bilat_symmetry <- state$values$vals$bilat_symmetry
     update_vals$mod_name <- vals$mod_name <- state$values$vals$mod_name
     
     
@@ -6908,13 +7269,13 @@ server <- function(input, output, session) {
     update_vals$pgls_ols_selected <- state$values$update_vals$pgls_ols_selected
     update_vals$outlier_group_level_plotted_selected <- state$values$update_vals$outlier_group_level_plotted_selected
     update_vals$outlier_group_tf_selected <- state$values$update_vals$outlier_group_tf_selected
-    update_vals$dependent_variables_selected <- state$values$update_vals$dependent_variables_selected
-    update_vals$dependent_variables_model_1_selected <- state$values$update_vals$dependent_variables_model_1_selected
-    update_vals$dependent_variables_model_2_selected <- state$values$update_vals$dependent_variables_model_2_selected
-    update_vals$dependent_variables_model_3_selected <- state$values$update_vals$dependent_variables_model_3_selected
-    update_vals$dependent_variables_order_model_1_selected <- state$values$update_vals$dependent_variables_order_model_1_selected
-    update_vals$dependent_variables_order_model_2_selected <- state$values$update_vals$dependent_variables_order_model_2_selected
-    update_vals$dependent_variables_order_model_3_selected <- state$values$update_vals$dependent_variables_order_model_3_selected
+    update_vals$independent_variables_selected <- state$values$update_vals$independent_variables_selected
+    update_vals$independent_variables_model_1_selected <- state$values$update_vals$independent_variables_model_1_selected
+    update_vals$independent_variables_model_2_selected <- state$values$update_vals$independent_variables_model_2_selected
+    update_vals$independent_variables_model_3_selected <- state$values$update_vals$independent_variables_model_3_selected
+    update_vals$independent_variables_order_model_1_selected <- state$values$update_vals$independent_variables_order_model_1_selected
+    update_vals$independent_variables_order_model_2_selected <- state$values$update_vals$independent_variables_order_model_2_selected
+    update_vals$independent_variables_order_model_3_selected <- state$values$update_vals$independent_variables_order_model_3_selected
     update_vals$tip_col_category_selected <- state$values$update_vals$tip_col_category_selected
     update_vals$outlier_group_selected <- state$values$update_vals$outlier_group_selected
     update_vals$remove_outlier_specimen_selected <- state$values$update_vals$remove_outlier_specimen_selected
@@ -6928,7 +7289,7 @@ server <- function(input, output, session) {
     update_vals$show_convex_hull_3_selected <- state$values$update_vals$show_convex_hull_3_selected
     update_vals$phy_signal_input_selected <- state$values$update_vals$phy_signal_input_selected
     update_vals$allometry_predictor_selected <- state$values$update_vals$allometry_predictor_selected
-    update_vals$dependent_variables_order_selected <- state$values$update_vals$dependent_variables_order_selected
+    update_vals$independent_variables_order_selected <- state$values$update_vals$independent_variables_order_selected
     update_vals$modularity_group_1_selected <- state$values$update_vals$modularity_group_1_selected
     update_vals$modularity_group_2_selected <- state$values$update_vals$modularity_group_2_selected
     update_vals$modularity_group_3_selected <- state$values$update_vals$modularity_group_3_selected
@@ -6957,7 +7318,8 @@ server <- function(input, output, session) {
     update_vals$warp_specific_ref_specimen_selected <- state$values$update_vals$warp_specific_ref_specimen_selected
     update_vals$warp_specific_targ_specimen_selected <- state$values$update_vals$warp_specific_targ_specimen_selected
     update_vals$remove_outlier_specimen_unselected <- state$values$update_vals$remove_outlier_specimen_unselected
-    
+    update_vals$symmetry_definitions_selected <- state$values$update_vals$symmetry_definitions_selected
+    update_vals$symmetry_landpairs_definitions_selected <- state$values$update_vals$symmetry_landpairs_definitions_selected
     
   })
   

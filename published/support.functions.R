@@ -1190,6 +1190,83 @@ digestItems <- function(items) {
   return(list(values = item_values, labels = item_labels))
 }
 
+pruning_script_function <- function(vals.lms_rx, vals.phy_rx, vals.trait_rx, vals.outlier_removed_names) {
+  '
+  drop_these <- NULL
+  if(!is.null(vals.outlier_removed_names)) { 
+    
+    drop_these <- c(drop_these, vals.outlier_removed_names) 
+    
+    if(!is.null(vals.phy_rx)) {
+      vals.phy_rx <- drop.tip(vals.phy_rx, tip = drop_these)
+      if(!is.null(vals.trait_rx)) {
+        vals.trait_rx <- vals.trait_rx[match(vals.phy_rx$tip.label, vals.trait_rx[,1]),]
+      }
+      if(!is.null(vals.lms_rx)) {
+        vals.lms_rx <- vals.lms_rx[,,match(vals.phy_rx$tip.label,dimnames(vals.lms_rx)[[3]])]
+      }
+    } else {
+      if(!is.null(vals.lms_rx)) {
+        vals.lms_rx <- vals.lms_rx[,,-match(drop_these,dimnames(vals.lms_rx)[[3]])] 
+        if(!is.null(vals.trait_rx)) {
+          vals.trait_rx <- vals.trait_rx[match(dimnames(vals.lms_rx)[[3]], vals.trait_rx[,1]),] 
+        }
+        
+      } else {
+        if(!is.null(vals.trait_rx)) {
+          vals.trait_rx <- vals.trait_rx[-match(drop_these, vals.trait_rx[,1]),]
+        }
+      } 
+    }
+    
+  } 
+  datasets <- c(!is.null(vals.trait_rx), !is.null(vals.phy_rx), !is.null(vals.lms_rx))
+  
+  if(length(which(datasets == T)) > 1) { # if there is more than one trait file
+    if(is.null(vals.trait_rx)) { # if no trait file
+      keep_these <- intersect(dimnames(vals.lms_rx)[[3]], vals.phy_rx$tip.label) 
+      if(!is.null(vals$outlier_removed_names)) {
+        keep_these <- keep_these[-match(vals$outlier_removed_names,keep_these)]
+      }
+      
+      if(length(keep_these) != 0) {
+        vals.phy_rx <- keep.tip(vals.phy_rx, tip = keep_these)
+        vals.lms_rx <- vals.lms_rx[,,match(vals.phy_rx$tip.label, dimnames(vals.lms_rx)[[3]])] 
+      }
+    }
+    if(is.null(vals.phy_rx)) { # if no phy file
+      keep_these <- intersect(vals.trait_rx[,1], dimnames(vals.lms_rx)[[3]]) 
+      
+      if(length(keep_these) != 0) {
+        vals.trait_rx <- vals.trait_rx[match(keep_these, vals.trait_rx[,1]),]
+        vals.lms_rx <- vals.lms_rx[,,match(keep_these, dimnames(vals.lms_rx)[[3]])] 
+      } 
+      
+    }
+    if(is.null(vals.lms_rx)) { # if no lm file
+      keep_these <- intersect(vals.trait_rx[,1], vals.phy_rx$tip.label)
+      
+      if(length(keep_these) != 0) {
+        vals.phy_rx <- keep.tip(vals.phy_rx, tip = keep_these)
+        vals.trait_rx <- vals.trait_rx[match(vals.phy_rx$tip.label, vals.trait_rx[,1]),]
+      } 
+      
+    }
+    
+    if(!is.null(vals.trait_rx) & !is.null(vals.phy_rx) & !is.nullvals.lms_rx)) {
+      keep_these <- Reduce(intersect, list(dimnames(vals.lms_rx)[[3]], vals.phy_rx$tip.label, vals.trait_rx[,1])) #  
+      
+      if(length(keep_these) != 0) {
+        vals.phy_rx <- keep.tip(vals.phy_rx, tip = keep_these)
+        vals.trait_rx <- vals.trait_rx[match(vals.phy_rx$tip.label, vals.trait_rx[,1]),]
+        vals.lms_rx <- vals.lms_rx[,,match(vals.phy_rx$tip.label, dimnames(vals.lms_rx)[[3]])]  
+        
+      }
+    }
+    
+  }'
+}
+
 orderInput <- function(inputId, label, items,
                        as_source = FALSE, connect = NULL,
                        item_class = c("default", "primary", "success",
