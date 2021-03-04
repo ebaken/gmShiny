@@ -50,10 +50,9 @@ digitizeImages(image.file = "School/Projects/ShinyMorph/testing_datasets/Stereom
 
 setwd("~/Documents/School/Projects/ShinyMorph/testing_datasets/Stereomorph/output-no_curves")
 
+shapes <- readShapes("~/Documents/School/Projects/ShinyMorph/testing_datasets/Stereomorph/output-4_curves")
+shapesGM <- readland.shapes(shapes, nCurvePts = c(4,3,4,4)) # can change 10 to a different number
+shapesGM$curves
 
-
-
-
-# 
 
 drawCheckerboard(nx=8, ny=6, square.size=180, filename='Checkerboard 8x6 (180px).JPG')

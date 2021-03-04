@@ -46,25 +46,25 @@ tryObserveEvent <- function(eventExpr,  handlerExpr, ignoreInit = F, priority=0)
 
 
 # Random data generation for pleth example data
-rand_trait_func_numb <- function(size) { # set it here
-  #dd <- c(1,1,1,2,2,2,3,3,3)
-  #return(dd)
-  success <- "start_point"
-  while(length(success) > 0){
-    temp_trait <- as.factor(sample(1:3, size = size, replace = T))
-    success <- which(table(temp_trait)<2)}
-  return(temp_trait)
-} # this function helps guarantee that the sample dataset generated for the Plethodon Example dataset has at least 2 observations at each level.
-
-rand_trait_func_lett <- function(size) {
-  #dd <- c("A", "B", "C", "A", "B", "C","A", "B", "C")
-  #return(dd)
-  success <- "start_point"
-  while(length(success) > 0){
-    temp_trait <- as.factor(sample(c("A", "B", "C"), size = size, replace = T))
-    success <- which(table(temp_trait)<2)}
-  return(temp_trait)
-}
+#rand_trait_func_numb <- function(size) { # set it here
+#  #dd <- c(1,1,1,2,2,2,3,3,3)
+#  #return(dd)
+#  success <- "start_point"
+#  while(length(success) > 0){
+#    temp_trait <- as.factor(sample(1:3, size = size, replace = T))
+#    success <- which(table(temp_trait)<2)}
+#  return(temp_trait)
+#} # this function helps guarantee that the sample dataset generated for the Plethodon Example dataset has at least 2 observations at each level.
+#
+#rand_trait_func_lett <- function(size) {
+#  #dd <- c("A", "B", "C", "A", "B", "C","A", "B", "C")
+#  #return(dd)
+#  success <- "start_point"
+#  while(length(success) > 0){
+#    temp_trait <- as.factor(sample(c("A", "B", "C"), size = size, replace = T))
+#    success <- which(table(temp_trait)<2)}
+#  return(temp_trait)
+#}
 
 # plotOutlier edited
 
@@ -195,6 +195,74 @@ colorSelectorDrop.ekb <- function(inputId, label, choices=all_color_options, dis
                       btn, dropTag, htmltools::tags$script(HTML(js)))
 }
 
+add.trajectories.ekb <- function (TP, traj.pch = 21, traj.col = 1, traj.lty = 1, traj.lwd = 1, 
+                                  traj.cex = 1.5, traj.bg = 1, start.bg = 3, end.bg = 2, traj.gp.bg = NULL) 
+{
+  traj <- TP$trajectories
+  nt <- length(traj)
+  np <- NROW(traj[[1]])
+  if (length(traj.pch) != 1 && length(traj.pch) != nt) 
+    stop("For add.trajectories, traj.pch must be equal in length \n         to the number of trajectories or just one value\n", 
+         call. = FALSE)
+  else if (length(traj.pch) == 1) 
+    traj.pch <- rep(traj.pch, nt)
+  if (length(traj.col) != 1 && length(traj.col) != nt) 
+    stop("For add.trajectories, traj.col must be equal in length \n         to the number of trajectories or just one value\n", 
+         call. = FALSE)
+  else if (length(traj.col) == 1) 
+    traj.col <- rep(traj.col, nt)
+  if (length(traj.lty) != 1 && length(traj.lty) != nt) 
+    stop("For add.trajectories, traj.lty must be equal in length \n         to the number of trajectories or just one value\n", 
+         call. = FALSE)
+  else if (length(traj.lty) == 1) 
+    traj.lty <- rep(traj.lty, nt)
+  if (length(traj.lwd) != 1 && length(traj.lwd) != nt) 
+    stop("For add.trajectories, traj.lwd must be equal in length \n         to the number of trajectories or just one value\n", 
+         call. = FALSE)
+  else if (length(traj.lwd) == 1) 
+    traj.lwd <- rep(traj.lwd, nt)
+  if (length(traj.cex) != 1 && length(traj.cex) != nt) 
+    stop("For add.trajectories, traj.cex must be equal in length \n         to the number of trajectories or just one value\n", 
+         call. = FALSE)
+  else if (length(traj.cex) == 1) 
+    traj.cex <- rep(traj.cex, nt)
+  if (length(traj.bg) != 1 && length(traj.bg) != nt) 
+    stop("For add.trajectories, traj.bg must be equal in length \n         to the number of trajectories or just one value\n", 
+         call. = FALSE)
+  else if (length(traj.bg) == 1) 
+    traj.bg <- rep(traj.bg, nt)
+  if(!is.null(traj.gp.bg)) {
+    if(length(traj.gp.bg) != np) stop("For add.trajectories, traj.gp.bg must be equal in length \n to the length of the trajectories.")
+  }
+  if (length(start.bg) != 1 && length(start.bg) != nt) 
+    stop("For add.trajectories, start.bg must be equal in length \n         to the number of trajectories or just one value\n", 
+         call. = FALSE)
+  else if (length(start.bg) == 1) 
+    start.bg <- rep(start.bg, nt)
+  if (length(end.bg) != 1 && length(end.bg) != nt) 
+    stop("For add.trajectories, end.bg must be equal in length \n         to the number of trajectories or just one value\n", 
+         call. = FALSE)
+  else if (length(end.bg) == 1) 
+    end.bg <- rep(end.bg, nt)
+  for (i in 1:nt) {
+    x <- traj[[i]][, 1]
+    y <- traj[[i]][, 2]
+    lines(x, y, col = traj.col[i], lwd = traj.lwd[i], lty = traj.lty[i])
+    
+    if(!is.null(traj.gp.bg)){
+      for(j in 1:np) {
+        points(x[j], y[j], col = traj.gp.bg[j], pch = traj.pch[i], lwd = traj.lwd[i], 
+               cex = traj.cex[i], bg = traj.gp.bg[j])
+      }
+    } else {
+      points(x, y, col = 1, pch = traj.pch[i], lwd = traj.lwd[i], 
+             cex = traj.cex[i], bg = traj.bg[i])
+    }
+    
+    
+  }
+}
+
 
 model_definition <- function(input.independent_variables, vals.trait_rx, vals.csize, 
                              vals.trait_1_treatment, vals.trait_2_treatment, vals.trait_3_treatment,
@@ -213,7 +281,8 @@ model_definition <- function(input.independent_variables, vals.trait_rx, vals.cs
   
   csize <- NULL
   if(!is.null(vals.csize)) { 
-    csize <- vals.csize }
+    csize <- vals.csize
+  }
   
   if(!is.null(trait_1)) {
     if(vals.trait_1_treatment == "disc") {  
@@ -263,13 +332,20 @@ model_definition <- function(input.independent_variables, vals.trait_rx, vals.cs
       }
     }
   if(input.pgls_ols == "pgls" & !is.null(vals.phy_rx)) { 
-    if(is.null(trait_1)) { 
-
+    if(is.null(trait_1) & !is.null(csize)) { 
+      
       gdf <- geomorph.data.frame(shape = gpa_coords_rx_reactive, phy = vals.phy_rx, csize = csize)
+      
     } else {
-      gdf <- geomorph.data.frame(shape = gpa_coords_rx_reactive, phy = vals.phy_rx, 
-                                 trait_1 = trait_1, trait_2 = trait_2, trait_3 = trait_3,
-                                 csize = csize) 
+      if(!is.null(csize)) {
+        gdf <- geomorph.data.frame(shape = gpa_coords_rx_reactive, phy = vals.phy_rx, 
+                                   trait_1 = trait_1, trait_2 = trait_2, trait_3 = trait_3,
+                                   csize = csize) 
+      } else {
+        gdf <- geomorph.data.frame(shape = gpa_coords_rx_reactive, phy = vals.phy_rx, 
+                                   trait_1 = trait_1, trait_2 = trait_2, trait_3 = trait_3) 
+      }
+      
     }
     
     # 1 trait selected
@@ -285,7 +361,7 @@ model_definition <- function(input.independent_variables, vals.trait_rx, vals.cs
     if(identical(independent_variables_order_renamed, "csize")) { 
       results <- procD.pgls(shape ~ csize, phy = phy, data = gdf, print.progress = F, 
                             iter = input.anova_perm, SS.type = as.character(input.ss_type))} 
-
+    
     # 2 traits selected with interaction options
     if(identical(independent_variables_order_renamed, c("by_trait_1", "by_trait_2"))){
       if(input.interactions_included) {
@@ -706,12 +782,19 @@ model_definition <- function(input.independent_variables, vals.trait_rx, vals.cs
     
   }
   if(input.pgls_ols == "ols") { 
-    if(is.null(trait_1)) { 
+    if(is.null(trait_1) & !is.null(csize)) { 
       gdf <- geomorph.data.frame(shape = gpa_coords_rx_reactive, csize = csize)
     } else {
-      gdf <- geomorph.data.frame(shape = gpa_coords_rx_reactive, 
-                                 trait_1 = trait_1, trait_2 = trait_2, trait_3 = trait_3,
-                                 csize = csize) 
+      if(!is.null(csize)) {
+        gdf <- geomorph.data.frame(shape = gpa_coords_rx_reactive, 
+                                   trait_1 = trait_1, trait_2 = trait_2, trait_3 = trait_3,
+                                   csize = csize) 
+      } else { 
+        gdf <- geomorph.data.frame(shape = gpa_coords_rx_reactive, 
+                                   trait_1 = trait_1, trait_2 = trait_2, trait_3 = trait_3) 
+      }
+      
+      
     }
     
     if(identical(independent_variables_order_renamed, "by_trait_1")) { 

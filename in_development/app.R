@@ -6,8 +6,9 @@ if(!require(geomorph)) {install.packages("remotes")
 }
 
 library(shiny); library(shinyjs); library(shinyWidgets); library(shinydashboard); library(shinythemes) 
-library(shinyalert); library(shinyMatrix); library(shinyjqui)
-library(geomorph); library(ape); library(stringr); library(stringi); library(RColorBrewer); library(reactlog)
+library(shinyalert); library(shinyMatrix); library(shinyjqui); library(shinymeta); library(prettycode)
+library(geomorph); library(ape); library(stringr); library(stringi)
+library(RColorBrewer); library(reactlog); library(StereoMorph); library(shinybusy)
 
 # elements with !!! in the comments indicate changes that should be made in the future
 # elements with ??? in the comments indicate functionalities that have not been fully verified or need more rigorous testing
@@ -37,13 +38,15 @@ color.palette.options <- c("Dark2", "Accent", "PuBuGn")
 newmat <- NULL
 old_independent_vars <- NULL
 drop_these <- NULL
-options(shiny.maxRequestSize = 30*1024^2)
 symmetry_landpairs_manual_matrix <- matrix(NA, ncol = 2, nrow = 1) 
 colnames(symmetry_landpairs_manual_matrix) <- c("Side 1", "Side 2")
 
+options(shiny.maxRequestSize = 30*1024^2)
+options(shiny.suppressMissingContextError = TRUE)
 options(shiny.reactlog = TRUE) # this allows for the reaction log to be generated (hit command + fn + f3 to see it)
 
 ui <- function(request) {
+  
   navbarPage(
     title = "Geomorph Shiny App",
     id = "navbar",
@@ -55,105 +58,135 @@ ui <- function(request) {
                                               label_on = "Instructions On", label_off = "Instructions Off",
                                               value = F, shape = "curve", icon_on = icon("check"),icon_off = icon("remove"),
                                               status_on = "info", status_off = "warning",  inline = T)),
-                          #actionButton("alert_show_here", label = "Show Instructions for This Page", style='padding-top:3px; padding-bottom:3px; font-size:85%')),
-                          column(6, align = "right", bookmarkButton(style='padding-top:3px; padding-bottom:3px; font-size:85%')))),
+                          column(6, align = "right", 
+                                 downloadButton('export_data_current_state', "Export Current Data",
+                                                style='width: 200px; padding-top:3px; padding-bottom:3px; font-size:85%; background-color: #337ab7; border-color: #337ab7;',
+                                                icon = shiny::icon("registered"))#,
+                                 #bookmarkButton(style='padding-top:3px; padding-bottom:3px; font-size:85%')
+                          ))),
     tabPanel(
       "Data Input",
+      add_busy_spinner(spin = "fading-circle",color = "#ceecf0", timeout = 300, height = '40px', width = '40px'),
       fluidRow(class = "toprow",
-               column(width = 6), 
+               column(width = 8), 
                column(width = 2, 
-                      align = "right", conditionalPanel(condition = "output.datasets_dont_match", 
-                                                        actionButton(inputId = "go_pruning", label = "Prune Datasets To Match",  width = '100%', style='padding:6px; font-size:85%'))),  # this button shows up when the shape, phy, and/or trait files do not contain exactly the same species in the same order. Clicking the button trims all uploaded datasets to just the species/specimen names that match
-               column(width = 2, 
-                      align = "right", conditionalPanel(condition = "output.example_tps_selected || output.file_tps_selected || 
-                                                 output.file_phy_selected || output.file_trait_selected", 
-                                                        actionButton(inputId = "go_file_reset", label = "Clear All Inputs",  width = '100%', style='padding:6px; font-size:85%'))), # this button tries to reset all the inputs, basically resetting the app (??? not perfect) # icon = icon("cocktail"), class = "btn-warning")),
-               column(width = 2, 
-                      align = "right", actionButton(inputId = "go_example", label = "Use Example Plethodon Data", width = '100%', style='padding:6px; font-size:85%')) # this button activates the plethodon example dataset # icon = icon("dragon"), class = "btn-block btn-success"),
+                      align = "right", 
+                      conditionalPanel(
+                        "output.datasets_dont_match", 
+                        actionButton(inputId = "go_pruning", label = "Prune Datasets To Match",  width = '100%', 
+                                     style='padding:6px; font-size:85%; background-color: #003366; border-color: #003366;'))),  # this button shows up when the shape, phy, and/or trait files do not contain exactly the same species in the same order. Clicking the button trims all uploaded datasets to just the species/specimen names that match
+               conditionalPanel(
+                 "output.example_tps_selected || output.file_tps_selected || output.file_phy_selected || output.file_trait_selected", 
+                 column(width = 2, 
+                        align = "right", 
+                        actionButton(inputId = "go_file_reset", label = "Clear All Inputs",  width = '100%', style='padding:6px; font-size:85%'))), # this button tries to reset all the inputs, basically resetting the app (??? not perfect) # icon = icon("cocktail"), class = "btn-warning")),
+               conditionalPanel(
+                 "!(output.example_tps_selected || output.file_tps_selected ||  output.file_phy_selected || output.file_trait_selected)",
+                 column(width = 2, 
+                        align = "right", 
+                        actionButton(inputId = "go_example", label = "Use Example Plethodon Data", width = '100%', style='padding:6px; font-size:85%'))) # this button activates the plethodon example dataset # icon = icon("dragon"), class = "btn-block btn-success"),
       ), 
       hr(),
       fluidRow(
         column(width = 4, 
-               fluidRow(
-                 column(12, align = 'right',
-                        div(style = "padding: 0px; margin-bottom: 0px; font-size: 80%; height: 0px;",
-                            radioButtons(inputId = "shape_input_tps", NULL, 
-                                         choices = c("Thin Plate Spline" = "TPS", "StereoMorph" = "StereoMorph"),
-                                         selected = "TPS", inline = T)))),
-               div(style = "margin-top: -10px; padding: 0px; margin-bottom: 0px;",
-                   conditionalPanel(
-                     condition = "input.shape_input_tps == 'TPS'",
-                     fileInput(inputId = "file_tps", label = "Choose TPS File", multiple = FALSE,  width = "auto",
-                               accept = c("text/tps",".tps", "text/TPS", ".TPS"), 
-                               placeholder = "No tps file selected")),
-                   conditionalPanel(
-                     condition = "input.shape_input_tps == 'StereoMorph'",
-                     fileInput(inputId = "file_stereomorph", "Choose StereoMorph Files", 
-                               accept = c("text/txt",".txt",  "text/shapes", ".shapes"),
-                               multiple = T, width = "auto", 
-                               placeholder = "No shape file selected"))), # upload tps files here
                conditionalPanel(
-                 condition = "input.shape_input_tps == 'TPS' && output.file_tps_selected", hr(), # this panel shows up once a tps file has been selected
+                 "!output.file_tps_selected",
                  fluidRow(
-                   column(4, radioButtons(inputId = "raw_lms_already_aligned", "Specimens Are:",
-                                          choices = c("Not Yet Aligned" = F, "Already Aligned" = T),
-                                          selected = F, width = "100%")),
-                   column(4,radioButtons(inputId = "spec_id", label = "Extract ID From:", # option to specify how the specimens are labeled
-                                         choices = c("ID line" = "ID", "IMAGE line" = "imageID", "Assign New Names" = "None"),
-                                         selected = "ID", width = "100%")),
-                   column(4, radioButtons(inputId = "neg_lms", "Negative LMs Are:", # option to indicate whether negative LMs should be taken as missing data or as real negative values
-                                          choices = c("True LMs" = F, "Missing Data" = T), 
-                                          selected = F, width = "100%"))),  br()),
-               conditionalPanel(
-                 condition = "input.shape_input_tps == 'StereoMorph' && output.stereomorph_curvetotal_n > 0",  
-                 div(style = "padding: 0px; margin: 0px;",
-                     hr(),
-                     fluidRow(
-                       column(12, h5(strong("Number of Curve Points")))
-                     ),
-                     fluidRow(
-                       column(2, align = 'center', numericInput(inputId = "stereomorph_curve1_n", HTML("<span style='font-size: 80%'>Curve 1</span>"), value = 3, min = 0, max = 100, step = 1, width = '100%')),
-                       conditionalPanel(
-                         "output.stereomorph_curvetotal_n > 1",
-                         column(2, align = 'center', numericInput(inputId = "stereomorph_curve2_n", HTML("<span style='font-size: 80%'>Curve 2</span>"), value = 3, min = 0, max = 100, step = 1, width = '100%')),
-                       ),
-                       conditionalPanel(
-                         "output.stereomorph_curvetotal_n > 2",
-                         column(2, align = 'center', numericInput(inputId = "stereomorph_curve3_n", HTML("<span style='font-size: 80%'>Curve 3</span>"), value = 3, min = 0, max = 100, step = 1, width = '100%'))
-                       ), 
-                       conditionalPanel(
-                         "output.stereomorph_curvetotal_n > 3",
-                         column(2, align = 'center', numericInput(inputId = "stereomorph_curve4_n", HTML("<span style='font-size: 80%'>Curve 4</span>"), value = 3, min = 0, max = 100, step = 1, width = '100%'))
-                       ),
-                       conditionalPanel(
-                         "output.stereomorph_curvetotal_n > 4",
-                         column(2, align = 'center', numericInput(inputId = "stereomorph_curve5_n", HTML("<span style='font-size: 80%'>Curve 5</span>"), value = 3, min = 0, max = 100, step = 1, width = '100%'))
-                       ),
-                       conditionalPanel(
-                         "output.stereomorph_curvetotal_n > 5",
-                         column(2, align = 'center', numericInput(inputId = "stereomorph_curve6_n", HTML("<span style='font-size: 80%'>Curve 6</span>"), value = 3, min = 0, max = 100, step = 1, width = '100%'))
-                       ))
-                 ), 
-                 hr()),
+                   column(12, align = 'right',
+                          div(style = "padding: 0px; margin-bottom: 0px; font-size: 80%; height: 0px;",
+                              radioButtons(inputId = "shape_file_type", NULL, 
+                                           choices = c("TPS or NTS" = "TPSorNTS", "StereoMorph"="StereoMorph"),
+                                           selected = "TPSorNTS", inline = T)))),
+                 div(style = "margin-top: -10px; padding: 0px; margin-bottom: 0px;",
+                     conditionalPanel(
+                       condition = "input.shape_file_type == 'TPSorNTS'",
+                       fileInput(inputId = "file_tps", label = "Choose Shape File", multiple = FALSE,  width = "auto",
+                                 accept = c("text/tps",".tps", "text/TPS", ".TPS", "text/nts",".nts"), 
+                                 placeholder = "No shape file selected")),
+                     conditionalPanel(
+                       condition = "input.shape_file_type == 'StereoMorph'",
+                       fileInput(inputId = "file_stereomorph", "Choose StereoMorph File(s)", 
+                                 accept = c("text/txt",".txt",  "text/shapes", ".shapes"),
+                                 multiple = T, width = "auto", 
+                                 placeholder = "No shape file selected")))), # upload tps files here
+               
                conditionalPanel(
                  condition = "output.file_tps_selected", 
-                 div(style = "overflow: hidden; overflow-y: scroll; max-height: calc(100vh - 280px); position:relative;", 
-                     verbatimTextOutput("shape_file"), br(), br()))), # this displays a preview of the input tps file, mostly for spot checking and general confirmation that the intended file was uploaded
+                 fluidRow(column(12, align = "center", h4("Uploaded Shape Data", style = "margin: 20px;"))),
+                 hr(),
+                 div(style = "overflow: hidden; overflow-y: scroll; max-height: calc(100vh - 255px); position:relative;", 
+                     conditionalPanel(
+                       condition = "input.shape_file_type == 'TPSorNTS' && output.file_tps_selected", 
+                       # this panel shows up once a tps file has been selected
+                       fluidRow(
+                         column(4, radioButtons(inputId = "raw_lms_already_aligned", "Specimens Are:",
+                                                choices = c("Not Yet Aligned" = F, "Already Aligned" = T),
+                                                selected = F, width = "100%")),
+                         column(4, radioButtons(inputId = "spec_id", label = "Extract ID From:", # option to specify how the specimens are labeled
+                                                choices = c("ID line" = "ID", "IMAGE line" = "imageID", "Assign New Names" = "None"),
+                                                selected = "ID", width = "100%")),
+                         column(4, radioButtons(inputId = "neg_lms", "Negative LMs Are:", # option to indicate whether negative LMs should be taken as missing data or as real negative values
+                                                choices = c("True LMs" = F, "Missing Data" = T), 
+                                                selected = F, width = "100%"))),  hr()),
+                     conditionalPanel(
+                       condition = "input.shape_file_type == 'StereoMorph' && !output.stereomorph_curvetotal_n == 0",  
+                       div(style = "padding: 0px; margin: 0px;",
+                           fluidRow(
+                             column(9, h5(strong("Number of Curve Points"))),
+                             column(3, actionButton("go_run_stereomorph_curves", "Apply", width = '100%', 
+                                                    style='padding:6px; font-size:85%; background-color: #003366; border-color: #003366;'))
+                           ),
+                           fluidRow(
+                             column(2, align = 'center', numericInput(inputId = "stereomorph_curve1_n", HTML("<span style='font-size: 80%'>Curve 1</span>"), value = 3, min = 0, max = 100, step = 1, width = '100%')),
+                             conditionalPanel(
+                               "output.stereomorph_curvetotal_n > 1",
+                               column(2, align = 'center', numericInput(inputId = "stereomorph_curve2_n", HTML("<span style='font-size: 80%'>Curve 2</span>"), value = 3, min = 0, max = 100, step = 1, width = '100%')),
+                             ),
+                             conditionalPanel(
+                               "output.stereomorph_curvetotal_n > 2",
+                               column(2, align = 'center', numericInput(inputId = "stereomorph_curve3_n", HTML("<span style='font-size: 80%'>Curve 3</span>"), value = 3, min = 0, max = 100, step = 1, width = '100%'))
+                             ), 
+                             conditionalPanel(
+                               "output.stereomorph_curvetotal_n > 3",
+                               column(2, align = 'center', numericInput(inputId = "stereomorph_curve4_n", HTML("<span style='font-size: 80%'>Curve 4</span>"), value = 3, min = 0, max = 100, step = 1, width = '100%'))
+                             ),
+                             conditionalPanel(
+                               "output.stereomorph_curvetotal_n > 4",
+                               column(2, align = 'center', numericInput(inputId = "stereomorph_curve5_n", HTML("<span style='font-size: 80%'>Curve 5</span>"), value = 3, min = 0, max = 100, step = 1, width = '100%'))
+                             ),
+                             conditionalPanel(
+                               "output.stereomorph_curvetotal_n > 5",
+                               column(2, align = 'center', numericInput(inputId = "stereomorph_curve6_n", HTML("<span style='font-size: 80%'>Curve 6</span>"), value = 3, min = 0, max = 100, step = 1, width = '100%'))
+                             ))
+                       ),  hr() ),
+                     
+                     verbatimTextOutput("shape_file"), br()))), # this displays a preview of the input tps file, mostly for spot checking and general confirmation that the intended file was uploaded
         column(width = 4, 
-               fileInput(inputId = "file_phy", label = "Choose Phylogeny File", multiple = FALSE, width = "auto", # input phylogeny file. at the moment, only .tre files have been tested or coded for.
-                         accept = c("text/tre",".tre", ".nexus", ".nex", "text/nex"), placeholder = "No tree file selected"),
                conditionalPanel(
-                 condition = "output.file_phy_selected", hr(),
-                 div(style = "overflow: hidden; overflow-y: scroll; max-height: calc(100vh - 280px); position:relative;",
+                 "!output.file_phy_selected",
+                 fileInput(inputId = "file_phy", label = "Choose Phylogeny File", multiple = FALSE, width = "auto", # input phylogeny file. at the moment, only .tre files have been tested or coded for.
+                           accept = c("text/tre",".tre", ".nexus", ".nex", "text/nex"), placeholder = "No tree file selected")
+               ),
+               conditionalPanel(
+                 condition = "output.file_phy_selected",
+                 fluidRow(column(12, align = "center", h4("Uploaded Phylogeny", style = "margin: 20px;"))),
+                 hr(),
+                 div(style = "overflow: hidden; overflow-y: scroll; max-height: calc(100vh - 255px); position:relative;",
                      checkboxInput(inputId = "show_tip_label_phy_preview", label = "Display Tip Labels", TRUE),
                      plotOutput(height = "auto", "phylogeny")))), #this displays the phylogeny uploaded, again for spot checking.
         column(width = 4,
-               fileInput(inputId = "file_trait", label = "Choose Trait File", multiple = FALSE, width = "auto", # input trait file. at the moment, only .csv files are allowed
-                         accept = c("text/csv",".csv", "text/xls", ".xls", "text/xlsx", ".xlsx"), placeholder = "No trait file selected"),
+               conditionalPanel(
+                 "!output.file_trait_selected",
+                 fileInput(inputId = "file_trait", label = "Choose Trait File", multiple = FALSE, width = "auto", # input trait file. at the moment, only .csv files are allowed
+                           accept = c("text/csv",".csv", "text/xls", ".xls", "text/xlsx", ".xlsx"), 
+                           placeholder = "No trait file selected")
+               ),
                conditionalPanel(
                  condition = "output.file_trait_selected", 
-                 hr(style = "margin-top: 10px; margin-bottom: 10px; padding: 0px;"),
-                 div(style = "overflow: hidden; overflow-y:scroll; max-height: calc(100vh - 280px); position:relative; overflow-x: hidden;", 
+                 fluidRow(column(12, align = "center", h4("Uploaded Trait Data", style = "margin: 20px;"))),
+                 hr(),
+                 #hr(style = "margin-top: 10px; margin-bottom: 10px; padding: 0px;"),
+                 div(style = "overflow: hidden; overflow-y:scroll; max-height: calc(100vh - 255px); position:relative; overflow-x: hidden;", 
                      fluidRow(
                        column(
                          3, div(style = "margin-bottom: 0px;",h5(strong("Select Column(s):")))),
@@ -214,6 +247,7 @@ ui <- function(request) {
     tabPanel(
       title = "Data Prep",
       id = "data_prep",
+      add_busy_spinner(spin = "fading-circle",color = "#ceecf0", timeout = 300, height = '40px', width = '40px'),
       tabsetPanel(
         id = "tab_dataprep", 
         tabPanel(
@@ -229,19 +263,52 @@ ui <- function(request) {
                           plotOutput("all_specimens", height = 700,
                                      click = "link_click_initiated", dblclick = "link_click_end", brush = "semis_selected")),
                         br(), br(), 
-                        fluidRow(align= "center",
+                        fluidRow(
+                          column(4, offset = 2, align= "right",
                                  downloadButton("export_plot_all_specimens", label = "Export Plot", 
-                                                style='width: 200px; padding:6px; font-size:80%; 
-                             background-color: #337ab7; border-color: #337ab7;'))), br(), br()), # clicks and double clicks are for drawing the links between landmarks. the brush is for selecting semilandmarks
+                                                style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;')),
+                          column(4, align = "left",
+                                 downloadButton("export_plot_all_specimen_code", "Download Code", icon = shiny::icon("registered"),
+                                                style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;'))
+                        ), 
+                        br()
+              ), 
+              br(), br()), # clicks and double clicks are for drawing the links between landmarks. the brush is for selecting semilandmarks
             sidebarPanel(
               width = 3,  style = "overflow: hidden; overflow-y: scroll; max-height: calc(100vh - 150px); position:relative;",
               hr(style="border-color: purple;"),
               fluidRow(
                 align = "center", h4(strong("Settings"))), 
               hr(style="border-color: purple;"),
+              fluidRow(
+                column(6, align = "center", actionButton("flip_lms_ho", "Flip LMs Horizontally", width = "100%", style='padding:6px; font-size:80%')),
+                column(6, align = "center", actionButton("flip_lms_vert", "Flip LMs Vertically", width = "100%", style='padding:6px; font-size:80%'))
+              ), 
+              conditionalPanel(
+                "input.shape_file_type != 'StereoMorph' && output.links_dbclick_initiated",
+                hr(),
+              ),
+              conditionalPanel(
+                "input.shape_file_type == 'StereoMorph' && output.stereomorph_curvetotal_n > 0",
+                hr(),
+                fluidRow(
+                  column(12, align = "center",
+                         actionButton("semis_stereomorph", "Add Links to Match StereoMorph Curves",
+                                      width = 300, style='padding:6px; font-size:80%')))),
+              conditionalPanel(
+                "output.links_dbclick_initiated && input.shape_file_type == 'StereoMorph' && output.stereomorph_curvetotal_n > 0", br()
+              ),
+              conditionalPanel(
+                condition = "output.links_dbclick_initiated", 
+                fluidRow(
+                  align = "center",
+                  actionButton(inputId = "link_reset", label = "Reset Landmark Links", 
+                               width = 200, style='padding:6px; font-size:80%'))),
+              hr(),
               fluidRow(align = "center", h5(strong("Semilandmark Matrix"))),
               fluidRow(
                 column(8, offset = 2, 
+                       
                        div(style = "font-size:80%; text-align: center;",
                            matrixInput(
                              inputId = "semilms_manual_input", label = NULL,
@@ -259,62 +326,75 @@ ui <- function(request) {
                 column(12,
                        fileInput("semilms_upload_file_input", "Upload Semilandmark Matrix", accept = c("text/csv",".csv", "text/xls", ".xls", "text/xlsx", ".xlsx"),
                                  placeholder = "Select a CSV or excel file"))),
-              fluidRow(column(12,h5(strong("Color Options:")))),
-              fluidRow(div(style = "margin: 0px; padding: 0px; vertical-align: bottom;",
-                           column(2, h6("SemiLMs")),
-                           column(2, h6("Brackets")),
-                           column(2, h6("Other LMS")),
-                           column(2, h6("Individ")),
-                           column(2, h6("Labels")),
-                           column(2, h6("Links")))
-              ),
-              fluidRow(div(style = "margin: 0px; padding: 0px; vertical-align: bottom;",
-                           column(2, colorSelectorDrop.ekb("semilms_color", "Semilandmarks", selected = all_color_options[1])),
-                           column(2, colorSelectorDrop.ekb("semilms_color_brackets", "Bracketing Landmarks", selected = all_color_options[4])),
-                           column(2, colorSelectorDrop.ekb("semilms_color_other", "Other Landmarks")),
-                           column(2, colorSelectorDrop.ekb("semilms_color_individlms", "Individual Specimen Landmarks", selected = all_color_options[58], dropdownside = "right")),
-                           column(2, colorSelectorDrop.ekb("semilms_color_labels", "Labels", selected = all_color_options[1], dropdownside = "right")),
-                           column(2, colorSelectorDrop.ekb("semilms_color_links", "Links", dropdownside = "right"))
-              )), br(), br(),
               conditionalPanel(
                 condition = "output.semis_initiated",
                 fluidRow(
                   align = "center",
-                  actionButton(inputId = "semilms_reset", label = "Reset Semilandmark Selection",  
-                               width = 200, style='padding:6px; font-size:80%'), br(), br())), # resetting the semi landmark selections ??? does this reset completely and rerun if we selected some sliders then reset them, and did it again
-              conditionalPanel(
-                condition = "output.links_dbclick_initiated", 
+                  actionButton(inputId = "go_semilms_apply", "Apply Semilandmark Matrix", width = 200, 
+                               style='padding:6px; font-size:85%; background-color: #003366; border-color: #003366;')
+                ),br(),
                 fluidRow(
                   align = "center",
-                  actionButton(inputId = "link_reset", label = "Reset Landmark Links", 
-                               width = 200, style='padding:6px; font-size:80%')), br())))), # resetting the lines between the landmarks
+                  actionButton(inputId = "semilms_reset", label = "Reset Semilandmark Selection",  
+                               width = 200, style='padding:6px; font-size:80%'), br())), # resetting the semi landmark selections ??? does this reset completely and rerun if we selected some sliders then reset them, and did it again
+              hr(),
+              fluidRow(column(12,h5(strong("Color Options:")))),
+              fluidRow(div(style = "margin: 0px; padding: 0px; vertical-align: bottom;",
+                           column(2, align = "center", h6("SemiLMs")),
+                           column(2, align = "center", h6("Brackets")),
+                           column(2, align = "center", h6("Other LMs")),
+                           column(2, align = "center", h6("Individ")),
+                           column(2, align = "center", h6("Labels")),
+                           column(2, align = "center", h6("Links")))
+              ),
+              fluidRow(div(style = "margin: 0px; padding: 0px; vertical-align: bottom;",
+                           column(2, align = "center", colorSelectorDrop.ekb("semilms_color", "Semilandmarks", selected = all_color_options[7])),
+                           column(2, align = "center", colorSelectorDrop.ekb("semilms_color_brackets", "Bracketing Landmarks", selected = all_color_options[4])),
+                           column(2, align = "center", colorSelectorDrop.ekb("semilms_color_other", "Other Landmarks")),
+                           column(2, align = "center", colorSelectorDrop.ekb("semilms_color_individlms", "Individual Specimen Landmarks", selected = all_color_options[58], dropdownside = "right")),
+                           column(2, align = "center", colorSelectorDrop.ekb("semilms_color_labels", "Labels", selected = all_color_options[1], dropdownside = "right")),
+                           column(2, align = "center", colorSelectorDrop.ekb("semilms_color_links", "Links", dropdownside = "right"))
+              )), br(), br()
+            ))),
         tabPanel(
-          title = "Visualize Outliers and Individual Specimens", # plotoutiers 
+          title = "Visualize Outliers and Individual Specimens", 
           id = "tab_dataprep_visualizeoutliersandindividualspecimens",
           sidebarLayout(
-            
             mainPanel(
               id = "scroll_outlier_selected",
               width = 9, style = "overflow: hidden; overflow-y: scroll; max-height: calc(100vh - 130px); position:relative;", 
               br(), 
               wellPanel(style = "align: center; border-color: white; background-color: rgba(255,250,250, .25) ;", 
-                        plotOutput("outliers", height = 700, click = "outlier_selected"), # click is for selecting and visualizing each specimen
+                        plotOutput("visualize_outliers_all", height = 700, click = "outlier_selected"), # click is for selecting and visualizing each specimen
                         fluidRow(
-                          align = "center", 
-                          downloadButton("export_visualize_outliers_all", "Export Visualize Outliers Plot", 
-                                         style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;')), 
+                          column(
+                            4, offset = 2, align = "right", 
+                            downloadButton("export_visualize_outliers_all", "Export Plot", 
+                                           style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;')),
+                          column(
+                            4, align = "left",
+                            downloadButton("export_visualize_outliers_all_code", "Download Code", icon = shiny::icon("registered"),
+                                           style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;')
+                          )), 
                         br()),
               
-              conditionalPanel("output.outlier_selected", 
-                               wellPanel(style = "align: center; border-color: white; background-color: rgba(255,250,250, .25) ;",
-                                         
-                                         plotOutput("outlier_selected_lms", height = 700), 
-                                         fluidRow(
-                                           align = "center",
-                                           downloadButton("export_individual_specimen_shape", 
-                                                          "Export Selected Individual Plot", 
-                                                          style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;'), br())
-                               )), br(), br()),
+              conditionalPanel(
+                "output.outlier_selected", 
+                wellPanel(style = "align: center; border-color: white; background-color: rgba(255,250,250, .25) ;",
+                          
+                          plotOutput("outlier_selected_lms", height = 700), 
+                          fluidRow(
+                            column(
+                              4, offset = 2,
+                              align = "right",
+                              downloadButton("export_outlier_selected_lms", "Export Plot", 
+                                             style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;')),
+                            column(
+                              4, align = "left",
+                              downloadButton("export_outlier_selected_lms_code", "Download Code", icon = shiny::icon("registered"),
+                                             style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;'))
+                          ), br())
+              ), br(), br()),
             sidebarPanel(
               width = 3, style = "overflow: hidden; overflow-y: scroll; min-height: calc(100vh - 200px); max-height: calc(100vh - 150px); position:relative;",
               hr(style="border-color: purple;"),
@@ -350,16 +430,18 @@ ui <- function(request) {
                                hr(),
                                fluidRow(column(12,h5(strong("Individual Plot Color Options:")))),
                                fluidRow(div(style = "margin: 0px; padding: 0px; vertical-align: bottom;",
-                                            column(3, align = "center", h6("SemiLMs")),
-                                            column(3, align = "center", h6("LMs")),
-                                            column(3, align = "center", h6("Labels")),
-                                            column(3, align = "center", h6("Links")))
+                                            column(2, align = "center", h6("SemiLMs")),
+                                            column(2, align = "center", h6("Brackets")),
+                                            column(2, align = "center", h6("Other LMs")),
+                                            column(2, align = "center", h6("Labels")),
+                                            column(2, align = "center", h6("Links")))
                                ),
                                fluidRow(div(style = "margin: 0px; padding: 0px; vertical-align: bottom;",
-                                            column(3, align = "center", colorSelectorDrop.ekb("vis_outliers_color", "Semilandmarks", selected = all_color_options[1])),
-                                            column(3, align = "center", colorSelectorDrop.ekb("vis_outliers_color_other", "Other Landmarks")),
-                                            column(3, align = "center", colorSelectorDrop.ekb("vis_outliers_color_labels", "Labels", selected = all_color_options[1], dropdownside = "right")),
-                                            column(3, align = "center", colorSelectorDrop.ekb("vis_outliers_color_links", "Links", dropdownside = "right"))
+                                            column(2, align = "center", colorSelectorDrop.ekb("vis_outliers_color", "Semilandmarks", selected = all_color_options[7])),
+                                            column(2, align = "center", colorSelectorDrop.ekb("vis_outliers_color_brackets", "Bracketing Landmarks", selected = all_color_options[4])),
+                                            column(2, align = "center", colorSelectorDrop.ekb("vis_outliers_color_other", "Other Landmarks")),
+                                            column(2, align = "center", colorSelectorDrop.ekb("vis_outliers_color_labels", "Labels", selected = all_color_options[1], dropdownside = "right")),
+                                            column(2, align = "center", colorSelectorDrop.ekb("vis_outliers_color_links", "Links", dropdownside = "right"))
                                ))), 
               br()
             ))),
@@ -368,47 +450,68 @@ ui <- function(request) {
           id = "tab_dataprep_generalizedprocrustesalignment",
           br(), 
           fluidRow(
-            column(4, wellPanel(style = "align: center; border-color: white; background-color: rgba(255,250,250,.25);
+            column(4, wellPanel(
+              style = "align: center; border-color: white; background-color: rgba(255,250,250,.25);
                                 overflow: hidden; overflow-y: scroll; max-height: calc(100vh - 200px); position:relative;", 
-                                h4("Raw Imported LMs"),
-                                verbatimTextOutput("raw_lms_rx"))),
+              h4("Raw Imported LMs"),
+              verbatimTextOutput("raw_lms_rx"))),
             column(4, align = "center",
-                   wellPanel(style = "align: center; border-color: white; background-color: rgba(255,250,250,.25);
+                   wellPanel(
+                     style = "align: center; border-color: white; background-color: rgba(255,250,250,.25);
                                 overflow: hidden; overflow-y: scroll; max-height: calc(100vh - 200px); position:relative;", 
-                             fluidRow(
-                               h4("Dropped Specimens"),
-                               tableOutput("outlier_removed_names_tab")),
-                             br(), hr(),
-                             fluidRow(
-                               h4("Missing Landmarks to Estimate"),
-                               tableOutput("missing_lms_to_estimate")),
-                             hr(),
-                             fluidRow(
-                               h4("Semilandmark Matrix"),
-                               tableOutput("semilandmark_matrix")))),
+                     actionButton(inputId = "go_run_gpa", label = "Run GPA",  
+                                  style='width: 100%; height: 42px; padding:6px; 
+                                             font-size:120%; background-color: #003366; border-color: #003366;'), hr(),
+                     conditionalPanel(
+                       "output.semis_initiated", 
+                       fluidRow(
+                         column(
+                           12, align = "center",
+                           checkboxInput("ProcD", "Use Procrustes distance as optimization criterion of semi-landmarks")
+                         ))
+                     ),
+                     fluidRow(
+                       column(
+                         12, align = "center",
+                         checkboxInput("Proj", "Project Procrustes aligned specimens into tangent space", value = TRUE)
+                       )
+                     ),
+                     hr(),
+                     fluidRow(
+                       h4("Dropped Specimens"),
+                       tableOutput("outlier_removed_names_tab")),
+                     br(), hr(),
+                     fluidRow(
+                       h4("Missing Landmarks to Estimate"),
+                       tableOutput("missing_lms_to_estimate")),
+                     hr(),
+                     fluidRow(
+                       h4("Semilandmark Matrix"),
+                       tableOutput("semilandmark_matrix")),
+                     hr(),
+                     fluidRow(align = "center", 
+                              downloadButton("export_run_gpa_code", "Download GPA Code", icon = shiny::icon("registered"),
+                                             style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;'
+                              )))),
             column(4,
-                   wellPanel(style = "align: center; border-color: white; background-color: rgba(255,250,250,.25);
+                   wellPanel(
+                     style = "align: center; border-color: white; background-color: rgba(255,250,250,.25);
                                 overflow: hidden; overflow-y: scroll; max-height: calc(100vh - 200px); position:relative;", 
-                             actionButton(inputId = "go_run_gpa", label = "Run GPA",  
-                                          style='width: 100%; height: 42px; padding:6px; 
-                                             font-size:120%; background-color: #003366; border-color: #003366;'),
-                             downloadButton('export_all_data', "Export All Data",
-                                            style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;'),
-                             conditionalPanel(
-                               condition = "output.show_gpa", 
-                               br(),
-                               fluidRow(
-                                 column(6, align = "left", h4("Aligned LMs")),
-                                 column(6, align = "right", 
-                                        downloadButton('export_aligned_lms', 'Export Aligned LM File', 
-                                                       style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;'))), 
-                               br(), 
-                               verbatimTextOutput("gpa_aligned_rx")
-                             )) # 
+                     fluidRow(
+                       column(6, align = "left", h4("Aligned LMs"))
+                     ),
+                     conditionalPanel(
+                       condition = "!output.show_gpa", 
+                       h5(em("LMs Not Yet Aligned"))), 
+                     conditionalPanel(
+                       condition = "output.show_gpa", 
+                       verbatimTextOutput("gpa_aligned_rx")
+                     )) 
             )))
       )), 
     tabPanel(
       "Morphospace and Warp Grids", # why are the conditional panels not working on this tab panel? ???
+      add_busy_spinner(spin = "fading-circle",color = "#ceecf0", timeout = 300, height = '40px', width = '40px'),
       sidebarLayout(
         position = "right", 
         sidebarPanel(
@@ -603,7 +706,7 @@ ui <- function(request) {
                         column(width = 4, align = "center", style = "vertical-align: bottom;", p("Ref Points:"))),
                       conditionalPanel(
                         "output.links_dbclick_initiated && (input.warp_type == 'points' || input.warp_type == 'vector')",
-                        column(width = 4, align = "center", style = "vertical-align: bottom;", p("Ref Links:"))),
+                        column(width = 4, align = "center", style = "vertical-align: bottom;", p("Ref Links:"))), # !!! this does target links when warp type is vectors
                       conditionalPanel(
                         "input.warp_labels",
                         column(width = 4, align = "center", style = "vertical-align: bottom;", p("Labels:")))),
@@ -693,9 +796,19 @@ ui <- function(request) {
                     plotOutput(
                       "morphospace", click = "morphospace_specimen_click", dblclick = "morphospace_projection_dbclick", 
                       width = "100%", height = 700),br(),
-                    fluidRow(align = "center", 
-                             downloadButton("export_morphospace", "Export Morphospace Plot", 
-                                            style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7;  border-color: #337ab7;')), br()), 
+                    fluidRow(
+                      column(
+                        4, offset = 2, align = "right", 
+                        downloadButton(
+                          "export_morphospace", "Export Plot", 
+                          style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7;  border-color: #337ab7;')),
+                      column(
+                        4, align = "left",
+                        downloadButton(
+                          "export_morphospace_code", "Download Code", icon = shiny::icon("registered"),
+                          style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;'))
+                    ), 
+                    br()), 
           br(), 
           conditionalPanel(
             condition = "input.tip_col_category == 'by_trait_1' || input.tip_col_category == 'by_trait_2'|| input.tip_col_category == 'by_trait_3' || input.tip_col_category == 'csize'",
@@ -743,14 +856,19 @@ ui <- function(request) {
                       #fluidRow(column(9, offset = 1, h4("Global Integration"))),
                       plotOutput("warp_grid", width = "100%", height = 600), 
                       fluidRow(
-                        column(12, 
-                               align = "center",
+                        column(4, offset = 2, 
+                               align = "right",
                                downloadButton("export_warp_grid", "Export Warp Grid", 
-                                              style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7;  border-color: #337ab7;'))), 
+                                              style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7;  border-color: #337ab7;')),
+                        column(4, align = 'left',
+                               downloadButton("export_warp_grid_code", "Download Code", icon = shiny::icon("registered"),
+                                              style='width: 200px; padding:6px; font-size:80%; background-color: #337ab7; 
+                                              border-color: #337ab7;'))), 
                       br()), br())
         ))),
     tabPanel(
       "Shape Patterns",
+      add_busy_spinner(spin = "fading-circle",color = "#ceecf0", timeout = 300, height = '40px', width = '40px'),
       tabsetPanel(
         id = "tab_shapepatterns",
         tabPanel(
@@ -870,8 +988,10 @@ ui <- function(request) {
                 orderInput('modularity_group_8', NULL, items = NULL, placeholder = 'Drag landmarks here...', width = "300px",
                            connect = c('modularity_group_1', 'modularity_group_2', 'modularity_group_3', 'modularity_group_4', 'modularity_group_5', 'modularity_group_6', 'modularity_group_7'))),
               br(),
-              fluidRow(column(12, align = "center", actionButton("apply_modular_groups_go", label = "Assign LMs to Modules", width = "67%", style='padding:6px; font-size:85%'))),
-              br(),
+              fluidRow(column(12, align = "center", 
+                              actionButton("apply_modular_groups_go", label = "Assign LMs to Modules", width = '100%', 
+                                           style='padding:6px; font-size:85%; background-color: #003366; border-color: #003366;'))),
+              hr(),
               fluidRow(column(12, sliderInput("plot_modularity_visualization_cex", label= "Landmark Size:", min = 0, max = 4, value = 1, step = .1))),
               hr(),
               conditionalPanel(
@@ -933,7 +1053,7 @@ ui <- function(request) {
                         fluidRow(column(9, offset = 1, h4("Symmetry of Shape Variation"))), hr(),
                         conditionalPanel(
                           "!output.symmetry_initiated", br(),
-                          em(h5("Define symmetry analysis parameters in 'Settings', then press 'Apply Symmetry Analyses'."))
+                          em(h5("Define symmetry analysis parameters in 'Settings', then press 'Calculate'."))
                         ),
                         conditionalPanel(
                           "output.symmetry_initiated",
@@ -1019,7 +1139,10 @@ ui <- function(request) {
               hr(),
               numericInput(inputId = "symmetry_perm", label = "Number of Permutations:", 
                            value = 999, min = 0, max = 99999, step = 100),
-              fluidRow(column(12, align = "center", actionButton("run_symmetry_go", "Run Symmetry Analyses" ))), hr(),
+              fluidRow(column(12, align = "center", 
+                              actionButton("run_symmetry_go", "Calculate",
+                                           width = '100%', 
+                                           style='padding:6px; font-size:85%; background-color: #003366; border-color: #003366;'))), hr(),
               fluidRow(column(12, align = "center", actionButton("go_symmetry_useoutput", "Use Symmetric Component of Shape Variation", style='width: 100%'))), br(),
               fluidRow(column(12, align = "center", actionButton("export_symmetry_useoutput", "Export Symmetric Component of Shape Variation", style='width: 100%; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;'))), br(),
               fluidRow(column(12, align = "center", actionButton("go_asymmetry_useoutput", "Use Asymmetric Component of Shape Variation", style='width: 100%'))), br(),
@@ -1030,6 +1153,7 @@ ui <- function(request) {
     
     tabPanel(
       "Linear Models",
+      add_busy_spinner(spin = "fading-circle",color = "#ceecf0", timeout = 300, height = '40px', width = '40px'),
       tabsetPanel(
         id = "tab_linearmodels",
         tabPanel(
@@ -1132,7 +1256,7 @@ ui <- function(request) {
               selectInput(inputId = "ss_type", "Sums of Squares Calculation Method:", 
                           choices = c("Type 1" = "I", "Type 2" = "II", "Type 3" = "III"),
                           selected = "I"),
-              actionButton("go_run_anova", "Calculate", width = '100%', style='padding:6px; font-size:85%'), br(), br()
+              actionButton("go_run_anova", "Calculate", width = '100%', style='padding:6px; font-size:85%; background-color: #003366; border-color: #003366;'), br(), br()
             ))),
         tabPanel(
           "Allometry",
@@ -1184,7 +1308,7 @@ ui <- function(request) {
                   column(6, h5("ANOVA Table"))), 
                 fluidRow(column(9, tableOutput("model_comparison"))),
                 fluidRow(column(9, align = "center", downloadButton('export_model_comparison', 'Export Model Comparison Results', 
-                                                                    style='width: 300px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;'))),)),
+                                                                    style='width: 300px; padding:6px; font-size:80%; background-color: #337ab7; border-color: #337ab7;'))))),
             sidebarPanel(
               width = 3, 
               tags$style(".well {border-color: gray; background-color: #f5feff}"), 
@@ -1214,7 +1338,8 @@ ui <- function(request) {
               selectInput(inputId = "ss_type_model_comparison", "Sums of Squares Calculation Method:", 
                           choices = c("Type 1" = "I", "Type 2" = "II", "Type 3" = "III"), selected = "I"),
               
-              fluidRow(column(12, align="center",actionButton("go_run_model_comparison", "Calculate", width = '100%', style='padding:6px; font-size:85%'))), br()
+              fluidRow(column(12, align="center",actionButton("go_run_model_comparison", "Calculate", width = '100%', 
+                                                              style='padding:6px; font-size:85%; background-color: #003366; border-color: #003366;'))), br()
             )
           )),
         
@@ -1225,24 +1350,97 @@ ui <- function(request) {
               width = 9, br(),
               fluidRow(column(11, offset = 1, textOutput("model_trajectory", container = h5))), 
               hr(), 
-              fluidRow(column(6, plotOutput("trajectory_plot", width = "100%", height = 600)),
-                       column(6, verbatimTextOutput("trajectory_results")))
-            ),
+              wellPanel(
+                style = "align: center; border-color: white; background-color: rgba(255,250,250, .25) ;",
+                conditionalPanel(
+                  "output.traj_initiated",
+                  fluidRow(
+                    column(
+                      6, align = "center",
+                      fluidRow(plotOutput("trajectory_plot", height = "600px")), br(),
+                      fluidRow(downloadButton('export_trajectory_plot', 'Export Trajectory Plot', 
+                                              style='width: 200px; padding:6px; font-size:80%; 
+                                               background-color: #337ab7; border-color: #337ab7;'))),
+                    column(
+                      6, 
+                      div(style = "overflow: hidden; overflow-y: scroll; max-height: calc(100vh - 380px); 
+                                position:relative;",
+                          fluidRow(
+                            column(12, verbatimTextOutput("trajectory_results")))), br(),
+                      fluidRow(
+                        column(12, align = "center",
+                               downloadButton('export_trajectory_results', 'Export Trajectory Statistics', 
+                                              style='width: 200px; padding:6px; font-size:80%; 
+                                                   background-color: #337ab7; border-color: #337ab7;'))))),
+                  br())
+              ), br()),
             sidebarPanel(
               width = 3, 
+              style = "overflow: hidden; overflow-y: scroll; max-height: calc(100vh - 160px); position:relative;",
               hr(style="border-color: purple;"),
               fluidRow(align = "center", h4(strong("Settings"))), 
               hr(style="border-color: purple;"),
-              radioButtons("trajectory_group", "Group:", choices = c("Upload Trait Data" = "none")),
-              radioButtons("trajectory_trait", "Trait:", choices = c("Upload Trait Data" = "none")),
-              radioButtons("trajectory_attribute", "Attributes", choices = c("Magnitude Difference" = "MD", 
-                                                                             "Trajectory Correlations" = "TC",
-                                                                             "Trajectory Shape Differences" = "SD")))
+              radioButtons("trajectory_group", "Group Trajectories By:", choices = c("Upload Group Data" = "none")),
+              conditionalPanel(
+                "output.traj_trait_selected",
+                radioButtons("trajectory_trait", "Trajectory Across Trait:", choices = c("Upload Trait Data" = "none"))),
+              radioButtons("trajectory_independent_var", "Additional Covariate:", choices = c("None" = "none")),
+              radioButtons("trajectory_attribute", "Attributes:", choices = c("Magnitude Difference" = "MD", 
+                                                                              "Trajectory Correlations" = "TC",
+                                                                              "Trajectory Shape Differences" = "SD")),
+              numericInput(inputId = "traj_perm", label = "Number of Permutations:", 
+                           value = 999, min = 0, max = 99999, step = 100),
+              actionButton("go_trajectory_run", "Calculate", width = '100%', 
+                           style='padding:6px; font-size:85%; background-color: #003366; border-color: #003366;'),
+              hr(),
+              fluidRow(column(12,h5(strong("Trait Level Colors:")))),
+              conditionalPanel(
+                "output.traj_trait_selected",
+                fluidRow(div(style = "margin: 0px; padding: 0px; vertical-align: bottom;",
+                             column(2, align = "center", textOutput("traj_trait_level_1", container = h6)),
+                             column(2, align = "center", textOutput("traj_trait_level_2", container = h6)),
+                             column(2, align = "center", textOutput("traj_trait_level_3", container = h6)),
+                             
+                             column(2, align = "center", textOutput("traj_trait_level_4", container = h6)),
+                             
+                             column(2, align = "center", textOutput("traj_trait_level_5", container = h6)),
+                             
+                             column(2, align = "center", textOutput("traj_trait_level_6", container = h6)))
+                ),
+                fluidRow(div(style = "margin: 0px; padding: 0px; vertical-align: bottom;",
+                             column(2, align = "center", colorSelectorDrop.ekb("traj_trait_1_col", "Level 1", selected = all_color_options[44])),
+                             column(2, align = "center", colorSelectorDrop.ekb("traj_trait_2_col", "Level 2", selected = all_color_options[1])),
+                             conditionalPanel(
+                               "output.traj_trait_nlevels > 2",
+                               column(2, align = "center", colorSelectorDrop.ekb("traj_trait_3_col", "Level 3", selected = all_color_options[3]))),
+                             conditionalPanel(
+                               "output.traj_trait_nlevels > 3", 
+                               column(2, align = "center", colorSelectorDrop.ekb("traj_trait_4_col", "Level 4", selected = all_color_options[5], 
+                                                                                 dropdownside = "right"))),
+                             conditionalPanel(
+                               "output.traj_trait_nlevels > 4", 
+                               column(2, align = "center", colorSelectorDrop.ekb("traj_trait_5_col", "Level 5", selected = all_color_options[7], 
+                                                                                 dropdownside = "right"))),
+                             conditionalPanel(
+                               "output.traj_trait_nlevels > 5", 
+                               column(2, align = "center", colorSelectorDrop.ekb("traj_trait_6_col", "Level 6", selected = all_color_options[9], 
+                                                                                 dropdownside = "right"))))
+                ), br()),
+              fluidRow(
+                column(12,
+                       sliderInput("trajectory_specimen_cex", "Specimen Point Size:", min = 0, max = 5, value = 0.8, step = 0.1))),
+              fluidRow(
+                column(12,
+                       sliderInput("trajectory_traj_cex", "Trajectory Mean Point Size:", min = 0, max = 5, value = 1.5, step = 0.1))),
+              
+              
+              br(), br())
           ))
         
       )),
     tabPanel(
       "Extras",  
+      add_busy_spinner(spin = "fading-circle",color = "#ceecf0", timeout = 300, height = '40px', width = '40px'),
       tabsetPanel(
         id = "tab_extras",
         tabPanel(
@@ -1744,17 +1942,50 @@ server <- function(input, output, session) {
       (4) one of the semilandmarks is bracketed by itself (e.g., semilandmark 5 is set to slide between LMs 3 and 5), or
       (5) one of the semilandmarks is bracketed between 1 landmark on both sides (e.g., semilandmark 5 is set to slide between LMs 3 and 3). 
       <br></br>
-      Return to the 'Define Links and Semi-Landmarks' tab to fix the error before aligning the specimens.",
+      Fix the error(s) and press 'Apply Semilandmark Matrix' again before moving forward.",
         type = "error",
-        inputId = "alert_gpa_not_ready",
         html = T,
         size = "m"
       )
     }
   })
   
-  tryObserveEvent(input$alert_gpa_not_ready, {
-    if(input$alert_gpa_not_ready){
+  tryObserveEvent(input$tab_dataprep, ignoreInit = T, {
+    if(input$tab_dataprep != "Define Links and Semi-Landmarks") {
+      if(!is.null(vals$go_semilms_apply)) {
+        if(vals$go_semilms_apply == 0) {
+          if(nrow(input$semilms_manual_input) > 1) {
+            shinyalert(
+              title = "Apply Semilandmark Matrix",
+              text = "Before moving to the next page, you must apply the semilandmark matrix using the 
+        'Apply Semilandmark Matrix' button in the Settings panel. This will initiate a check to 
+        ensure that the matrix is in the right format without errors.",
+              type = "error",
+              inputId = "alert_semis_not_applied",
+              html = T,
+              size = "s"
+            )
+          }
+        }
+      } else {
+        if(nrow(input$semilms_manual_input) > 1) {
+          shinyalert(
+            title = "Apply Semilandmark Matrix",
+            text = "Before moving to the next page, you must apply the semilandmark matrix using the 
+        'Apply Semilandmark Matrix' button in the Settings panel. This will initiate a check to 
+        ensure that the matrix is in the right format without errors.",
+            type = "error",
+            inputId = "alert_semis_not_applied",
+            html = T,
+            size = "s"
+          )
+        }
+      }
+    }
+  })
+  
+  tryObserveEvent(input$alert_semis_not_applied, {
+    if(input$alert_semis_not_applied){
       updateTabsetPanel(session, "tab_dataprep", selected = "Define Links and Semi-Landmarks") # doesnt need a bookmarking workaround
     }
   })
@@ -2084,7 +2315,8 @@ server <- function(input, output, session) {
         <br></br>
         Check that the correct data files were selected for upload 
         and that the specimen names are consistent in format. Inconsistent capitalizations,
-        periods, dashes, spaces, or other formatting differences should be rectified before attempting 
+        periods, dashes, spaces, or other formatting differences should be rectified and the fixed files 
+        should be uploaded before attempting 
         to prune the datasets to match.",
         type = "error",
         html = T,
@@ -2098,7 +2330,8 @@ server <- function(input, output, session) {
   
   tryObserveEvent(mismatch_alert_listen(), {
     req(datasets_dont_match())
-    if(datasets_dont_match() & input$navbar != "Data Input"){
+    wrong_tab <- (input$navbar != "Data Input" & input$navbar != "Extras")
+    if(datasets_dont_match() & wrong_tab){
       shinyalert(
         title = "STOP",
         text = "It appears that your datasets have not been pruned to match eachother. 
@@ -2126,7 +2359,8 @@ server <- function(input, output, session) {
   
   
   tryObserveEvent(input$navbar, ignoreInit = T, {
-    if(input$navbar != "Data Prep" & input$navbar != "Data Input") {
+    req(gpa_coords_rx())
+    if(input$navbar != "Data Prep" & input$navbar != "Data Input"  & input$navbar != "Extras") {
       if(is.null(vals$go_run_gpa) & input$raw_lms_already_aligned == F) {
         shinyalert(
           title = "STOP",
@@ -2527,34 +2761,39 @@ server <- function(input, output, session) {
   update_vals <- reactiveValues()
   
   lms_rx <- reactive({ # landmark reactive element
-    dd <- input$go_remove_outlier_specimen_reset #trigger dddd
+    ee <- input$go_remove_outlier_specimen_reset #trigger
     if(is.null(vals$go_example_1)){ # if the user is NOT using the sample pleth data
-      if(input$shape_input_tps == "TPS") { # if the user selects "TPS" as shape file type
+      if(input$shape_file_type == "TPSorNTS") { # if the user selects "TPS" as shape file type
         req(input$file_tps) # stop running this reactive if there is no input tps file selected
         inFile <- input$file_tps
         if (endsWith(inFile$name, '.nts')){
           temp_LMs <- readland.nts(inFile$datapath)
-        } else if (endsWith(inFile$name, '.shapes')){
-          temp_LMs <- readland.shapes(inFile$datapath)
         } else if (endsWith(inFile$name, '.tps') | endsWith(inFile$name, '.TPS')){
-          temp_LMs <- readland.tps(inFile$datapath, specID = input$spec_id, negNA = input$neg_lms) # read in the tps data with options
+          temp_LMs <- readland.tps(inFile$datapath, specID = input$spec_id, negNA = input$neg_lms,
+                                   warnmsg = F) # read in the tps data with options
         }}
     } 
-    if(input$shape_input_tps == "StereoMorph") {
+    if(input$shape_file_type == "StereoMorph") {
+      
       req(input$file_stereomorph)
       inFile <- input$file_stereomorph
       
       shapes <- readShapes(inFile$datapath)
       vals$file_stereomorph_shape_curven <- length(shapes$curves.control[[1]])
       
-      if(length(shapes$curves.control[[1]]) > 0) { # if there are curves
-        curve_n_vec <- c(input$stereomorph_curve1_n, input$stereomorph_curve2_n, # create a vector the length of how many curves there are
-                         input$stereomorph_curve3_n, input$stereomorph_curve4_n,
-                         input$stereomorph_curve5_n, input$stereomorph_curve6_n)[1:length(shapes$curves.control[[1]])]
+      if(length(shapes$curves.control[[1]]) > 0 & !is.null(vals$go_run_stereomorph_curves)) { # if there are curves
+        vals$curve_n_vec <- c(isolate(input$stereomorph_curve1_n), isolate(input$stereomorph_curve2_n), # create a vector the length of how many curves there are
+                              isolate(input$stereomorph_curve3_n), isolate(input$stereomorph_curve4_n),
+                              isolate(input$stereomorph_curve5_n), isolate(input$stereomorph_curve6_n))[1:length(shapes$curves.control[[1]])]
+        if(length(shapes$curves.control[[1]]) > 6) {
+          for(i in 7:length(shapes$curves.control[[1]])) { # repeating the number of curve points in curve # 6 across all subsequent curves
+            vals$curve_n_vec <- c(vals$curve_n_vec, isolate(input$stereomorph_curve6_n))
+          }
+        }
       } else {
-        curve_n_vec <- NULL # otherwise replace with NULL
+        vals$curve_n_vec <- NULL # otherwise replace with NULL
       }
-      shapesGM <- readland.shapes(shapes, nCurvePts = curve_n_vec, continuous.curve = input$cont_curve) 
+      shapesGM <- readland.shapes(shapes, nCurvePts = vals$curve_n_vec, continuous.curve = input$cont_curve) 
       
       lms_unlisted <- as.matrix(unlist(shapesGM$landmarks))
       lm_mat <- matrix(NA, ncol = length(shapesGM$landmarks[[1]]), nrow = length(shapesGM$landmarks))
@@ -2570,12 +2809,9 @@ server <- function(input, output, session) {
       shapearray <- arrayspecs(A = lm_mat, p = length(shapesGM$landmarks[[1]])/2, k = 2)
       shape_names <- sapply(strsplit(inFile$name, split='.txt', fixed=TRUE), function(x) (x[1]))
       dimnames(shapearray)[[3]] <- shape_names
-      print(shapearray)
+      vals$shapesGM <- shapesGM
       temp_LMs <- shapearray
-      #if(anyNA(unlist(shapesGM$landmarks))) { # 
-      #  #shapesGM_missing_estimated <- estimate.missing(shapesGM)
-      #  #names(shapesGM_missing_estimated$landmarks) <- names(shapesGM$landmarks) # this is correct
-      #}
+      
     }
     if(!is.null(vals$go_example_1)){ 
       
@@ -2601,6 +2837,17 @@ server <- function(input, output, session) {
     dimnames(temp_LMs)[[2]] <- c("X", "Y", "Z")[1:(dim(temp_LMs)[2])] # labeling the dimensions in both scenarios of lms being 2 or 3 dimensions
     dimnames(temp_LMs)[[3]] <- str_replace_all(dimnames(temp_LMs)[[3]], " ", "_")  # make all names separated by underscores (matching most phylogeny inputs). 
     
+    if(length(dimnames(temp_LMs)[[3]]) != length(unique(dimnames(temp_LMs)[[3]]))){
+      name_levels <- unique(dimnames(temp_LMs)[[3]])
+      for(i in 1:length(name_levels)) { # renaming all specimens for which there are repeat names as ".1" ".2" etc 
+        these_specimens <- which(dimnames(temp_LMs)[[3]] == name_levels[i])
+        if(length(these_specimens) > 1) {
+          dimnames(temp_LMs)[[3]][these_specimens] <- paste(dimnames(temp_LMs)[[3]][these_specimens], 1:length(these_specimens), 
+                                                            sep = ".")
+        }
+      }
+      
+    }
     if(!is.null(isolate(update_vals$remove_outlier_specimen_unselected))){
       temp_LMs <- temp_LMs[,,-which(dimnames(temp_LMs)[[3]] %in% isolate(update_vals$remove_outlier_specimen_unselected))]
     }
@@ -2617,19 +2864,43 @@ server <- function(input, output, session) {
   tryObserveEvent(input$file_stereomorph, {
     if(!is.null(input$file_stereomorph)) {
       vals$tps_rx_upload_state <- 'uploaded'
+      if(!is.null(update_vals$links_df)){ vals$links_df <- update_vals$links_df }
     }
   })
   
-  tryObserveEvent(lms_rx(), ignoreInit = T, {
+  tryObserveEvent(input$shape_file_type, ignoreInit = T, priority = -10, {
+    if(!is.null(vals$tps_rx_upload_state)) { 
+      if(vals$tps_rx_upload_state == "reset"){
+        vals$file_stereomorph_shape_curven <- 0 # used for conditional paneling of curve_n options
+      }
+    }
+  })
+  
+  tryObserveEvent(lms_rx(), ignoreInit = F, {
+    if(!is.null(update_vals$links_df)){ vals$links_df <- update_vals$links_df }
+    
     req(vals$tps_rx_upload_state)
     if(vals$tps_rx_upload_state == "reset") { 
+      vals$links_df <- NULL
       vals$lms_rx <- NULL } else { 
         vals$lms_rx <- lms_rx()
       }
   })
   
+  tryObserveEvent(input$go_run_stereomorph_curves, ignoreInit = F, {
+    vals$go_run_stereomorph_curves <- input$go_run_stereomorph_curves
+    vals$stereomorph_curve1_n <- input$stereomorph_curve1_n
+    vals$stereomorph_curve2_n <- input$stereomorph_curve2_n
+    vals$stereomorph_curve3_n <- input$stereomorph_curve3_n
+    vals$stereomorph_curve4_n <- input$stereomorph_curve4_n
+    vals$stereomorph_curve5_n <- input$stereomorph_curve5_n
+    vals$stereomorph_curve6_n <- input$stereomorph_curve6_n
+    if(is.null(update_vals$links_df)){ vals$links_df <- NULL }
+  })
+  
   phy_rx <- reactive({ # phylogeny reactive element
     temp_phy <- NULL 
+    ee <- input$go_remove_outlier_specimen_reset #trigger
     if(is.null(vals$go_example_1)){ # if the example button has not been pressed
       if(!is.null(input$file_phy)) {
         inFile <- input$file_phy
@@ -2659,9 +2930,11 @@ server <- function(input, output, session) {
     vals$phy_rx_upload_state <- 'uploaded'
   })
   
-  tryObserveEvent(phy_rx(), ignoreInit = T, {
+  tryObserveEvent(phy_rx(), ignoreInit = F, {
     req(vals$phy_rx_upload_state)
-    if(vals$phy_rx_upload_state == "reset") { vals$phy_rx <- NULL } else {
+    if(vals$phy_rx_upload_state == "reset") { 
+      vals$phy_rx <- NULL
+    } else {
       vals$phy_rx <- phy_rx() 
     }
   })
@@ -2842,16 +3115,8 @@ server <- function(input, output, session) {
   
   gpa_coords_rx <- reactive({ # this reactive helps with whether or not the data should be aligned 
     req(vals$lms_rx)
-    
     vals$estimates_cancelled <- NULL
     if(input$raw_lms_already_aligned == F) {
-      if (!is.null(vals$curves)) {
-        curves <- as.matrix(vals$curves)
-        curves.long <- as.integer(curves)
-        curve.mat <- matrix(curves.long, ncol = 3, byrow = F)
-        colnames(curve.mat) <- c("before", "slide", "after")
-      } else { curve.mat <- NULL}
-      
       if(anyNA(vals$lms_rx)){ # if any need estimating because they're nas or marked as nas because neg_lm option
         
         # Testing whether NAs are in the correct placement for estimating missing landmarks
@@ -2910,10 +3175,22 @@ server <- function(input, output, session) {
         
         
       } else {
-        vals$Data_gpa <- gpagen(lms_estimated, curves = curve.mat)
+        
+        if(!is.null(vals$curves)) {
+          if(nrow(vals$curves) > 0){
+            curves <- as.matrix(vals$curves)
+            curve.mat <- matrix(as.integer(curves), ncol = 3, byrow = F)
+            colnames(curve.mat) <- c("before", "slide", "after")
+          } else { curve.mat <- NULL}
+        } else { curve.mat <- NULL} 
+        
+        vals$Data_gpa <- gpagen(lms_estimated, curves = curve.mat, 
+                                ProcD = input$ProcD, Proj = input$Proj, 
+                                print.progress = F)
         lms_final <- vals$Data_gpa$coords
         vals$csize <- vals$Data_gpa$Csize 
         names(vals$csize) <- dimnames(lms_final)[[3]]
+        
       } 
     } else {
       lms_final <- vals$lms_rx # pass lms straight through
@@ -2923,6 +3200,7 @@ server <- function(input, output, session) {
       vals$mshape_gpacoords_rx <- mshape(lms_final) # also making a mean shape item so modularity doesnt take so long
       return(lms_final) 
     } else { return(NULL) } 
+    
   }) 
   
   run_gpa_reset_listen <- reactive({ list(gpa_coords_rx(), vals$curves_final_anyNAs)})
@@ -3056,7 +3334,7 @@ server <- function(input, output, session) {
   output$example_tps_selected <- reactive({return(!is.null(vals$go_example_1))}) # this output allows for appropriate options to be available when using example pleth data
   outputOptions(output, 'example_tps_selected', suspendWhenHidden=FALSE)
   
-  output$stereomorph_curvetotal_n <- reactive({return(vals$file_stereomorph_shape_curven)})
+  output$stereomorph_curvetotal_n <- reactive({ return(vals$file_stereomorph_shape_curven) })
   outputOptions(output, 'stereomorph_curvetotal_n', suspendWhenHidden=FALSE)
   
   output$file_tps_selected <- reactive({return(!is.null(vals$lms_rx))}) # output for conditional paneling
@@ -3136,10 +3414,15 @@ server <- function(input, output, session) {
   output$morpho_dbclick_initiated <- reactive({return(!is.null(vals$morpho_dbclicked))}) # for conditional paneling for warp grid options
   outputOptions(output, 'morpho_dbclick_initiated', suspendWhenHidden=FALSE)
   
-  output$links_dbclick_initiated <- reactive({return(!is.null(vals$links_dbclicked))}) # for conditional paneling when plotAllSpecimens is double clicked to show the link reset button
+  output$links_dbclick_initiated <- reactive({return(!is.null(vals$links_df))}) # for conditional paneling when plotAllSpecimens is double clicked to show the link reset button
   outputOptions(output, 'links_dbclick_initiated', suspendWhenHidden=FALSE)
   
-  output$semis_initiated <- reactive({return(nrow(vals$curves_final) > 0)}) # for conditional paneling to display semis reset button 
+  output$semis_initiated <- reactive({
+    if(!is.null(vals$curves_final)) {
+      out <- nrow(vals$curves_final) > 0
+    } else { out <- F }
+    return(out)
+  }) # for conditional paneling to display semis reset button 
   outputOptions(output, 'semis_initiated', suspendWhenHidden=FALSE)
   
   datasets_dont_match <- reactive({
@@ -3182,6 +3465,12 @@ server <- function(input, output, session) {
   })
   outputOptions(output, 'multiple_terms_selected', suspendWhenHidden=FALSE)
   
+  output$anova_initiated <- reactive({
+    return(input$go_run_anova) 
+  })
+  outputOptions(output, 'anova_initiated', suspendWhenHidden=FALSE)
+  
+  
   output$multiple_terms_selected_model_1 <- reactive({
     req(input$independent_variables_model_1)
     return(length(input$independent_variables_model_1) > 1)
@@ -3200,11 +3489,20 @@ server <- function(input, output, session) {
   })
   outputOptions(output, 'multiple_terms_selected_model_3', suspendWhenHidden=FALSE)
   
+  output$traj_initiated <- reactive({ return(input$go_trajectory_run > 0)})
+  outputOptions(output, 'traj_initiated', suspendWhenHidden=FALSE)
+  
+  output$traj_trait_selected <- reactive({ return(input$trajectory_trait != "none")})
+  outputOptions(output, 'traj_trait_selected', suspendWhenHidden=FALSE)
+  
+  output$traj_trait_nlevels <- reactive({return(as.numeric(vals$traj_trait_nlevels))})
+  outputOptions(output, 'traj_trait_nlevels', suspendWhenHidden=FALSE)
+  
   #### tryObserveEvents for Example Data, Prune Datasets, and Clear Inputs Buttons #### 
   
-  tryObserveEvent(eventExpr = input$go_example, ignoreInit = F, {
+  tryObserveEvent(eventExpr = input$go_example, ignoreInit = T, {
     if(input$go_example > 0 ) {
-      vals$go_example_1 <- c(vals$go_example_1, "go")      
+      vals$go_example_1 <- input$go_example   
     } else { vals$go_example_1 <- NULL}
   })
   
@@ -3239,7 +3537,7 @@ server <- function(input, output, session) {
     }
   })
   
-  tryObserveEvent(eventExpr = vals$go_example_1, priority = 10000, ignoreInit = F, { # example dataset button
+  tryObserveEvent(eventExpr = vals$go_example_1, priority = 10000, ignoreInit = T, { # example dataset button
     if(!is.null(vals$go_example_1)) {
       names_reduced <- names(vals)
       names_reduced <- names_reduced[-match("go_example_1", names_reduced)]
@@ -3251,12 +3549,20 @@ server <- function(input, output, session) {
   })
   
   tryObserveEvent(eventExpr = input$go_file_reset, ignoreInit = T, {   
-    req(vals)
-    for(i in names(vals)) vals[[i]] <- NULL  
-    
+    if(!is.null(vals)){
+      for(i in names(vals)) vals[[i]] <- NULL
+    }
     vals$tip_pch <- 19
     vals$tip_col <- "black"
     
+    updateRadioButtons(session, "shape_file_type" , selected = "TPSorNTS")
+    reset("stereomorph_curve1_n")
+    reset("stereomorph_curve2_n")
+    reset("stereomorph_curve3_n")
+    reset("stereomorph_curve4_n")
+    reset("stereomorph_curve5_n")
+    reset("stereomorph_curve6_n")
+    reset("file_stereomorph")
     reset("trait_column")
     reset("file_tps")
     reset("file_phy")
@@ -3264,7 +3570,12 @@ server <- function(input, output, session) {
     reset("go_run_gpa")
     reset("spec_id")
     reset("neg_lms")
+    reset("go_example")
     
+    reset("semilms_manual_input")
+    
+    reset("flip_x_axis")
+    reset("flip_y_axis")
     reset("pca_x_axis")
     reset("pca_y_axis")
     reset("tip_col")
@@ -3307,7 +3618,6 @@ server <- function(input, output, session) {
     reset("trait_3_transformation")
     reset("apply_modular_groups_go")
     
-    reset("semilms_apply")
     reset("semilms_manual")
     reset("semilms_color_other")
     reset("semilms_color_brackets")
@@ -3333,6 +3643,7 @@ server <- function(input, output, session) {
     reset("vis_outliers_color")
     reset("vis_outliers_color_links")
     reset("vis_outliers_color_labels")
+    reset("vis_outliers_color_brackets")
     reset("vis_outliers_color_other")
     reset("go_remove_outlier_specimen_reset")
     reset("go_remove_outlier_specimen")
@@ -3460,7 +3771,7 @@ server <- function(input, output, session) {
     hideTab(inputId = "tab_shapepatterns", "Phylogenetic Signal")
     hideTab(inputId = "navbar", target = "Linear Models")
     
-  }) # delete replicates !!!!
+  })
   
   tryObserveEvent(eventExpr =vals$go_pruning, ignoreInit = F, { 
     req(gpa_coords_rx()) # this only runs if shape data exist
@@ -3492,8 +3803,13 @@ server <- function(input, output, session) {
   })  
   
   #### Dealing with Plot Clicks  #####
-  tryObserveEvent(eventExpr = input$semilms_apply, ignoreInit = T, {
-    if(is.null(vals$go_example_1)) { # ignore if using example pleth data
+  tryObserveEvent(eventExpr = input$go_semilms_apply, ignoreInit = T, {
+    if(vals$curves_final_anyNAs) {
+      alert_vals$gpa_not_ready <- T
+      vals$go_semilms_apply <- 0
+    } else {
+      alert_vals$gpa_not_ready <- F
+      vals$go_semilms_apply <- input$go_semilms_apply
       vals$curves <- vals$curves_final # triggers a rerun of gpa_coords_rx()
     }
   })
@@ -3504,11 +3820,13 @@ server <- function(input, output, session) {
     vals$morpho_clicked <- 1 # initiate the vals for conditional paneling
     rotation_x_df <- as.data.frame(pca_nonphylo_rx()$x) # pca rotation converted into a dataframe for nearPoints function below
     if(is.null(update_vals$morphospace_specimen_click_selected)) { 
+      
       clicked_point <- nearPoints(rotation_x_df, input$morphospace_specimen_click, 
                                   xvar = x_lab_rx(), yvar = y_lab_rx(),
                                   threshold = 20, maxpoints = 1)  # this prints the x and y values of the nearest point (within 20 pixels) to the click on the morphospace
-      
     } else { clicked_point <- update_vals$morphospace_specimen_click_selected }
+    
+    
     
     if(length(unlist(clicked_point))>1){
       
@@ -3518,7 +3836,8 @@ server <- function(input, output, session) {
       }
       if(input$warp_comparison_start == "selected_obs") {  vals$specimen_row_ref <- clicked_point }
       
-    } 
+    }
+    
   })
   
   tryObserveEvent(eventExpr =input$morphospace_projection_dbclick, ignoreInit = T, {
@@ -3604,6 +3923,7 @@ server <- function(input, output, session) {
   })
   
   targ_rx <- reactive({
+    
     if(input$warp_var_displayed == "full_morphospace"){
       req(input$warp_comparison_end)
       if(input$warp_comparison_end == "mean") { 
@@ -3616,7 +3936,6 @@ server <- function(input, output, session) {
         req(vals$specimen_row_targ)
         temp_pc <- pca_rx()$x
         which_row <- match(row.names(vals$specimen_row_targ), row.names(temp_pc))
-        
         temp_pc_pred <- shape.predictor(gpa_coords_rx(), x= temp_pc, Intercept = FALSE, tar = temp_pc[which_row,])
         out <- temp_pc_pred$tar
         names(out)<- row.names(vals$specimen_row_targ)
@@ -3661,26 +3980,52 @@ server <- function(input, output, session) {
         
         names(out) <- paste("(", round(vals$projection_row[1], 4), ", ", round(vals$projection_row[2], 4), ")", sep = "")
       }
-      return(out)
+      if(is.null(out)) {
+        print('here none')
+        return("none yet selected")} else {
+          print(out)
+          return(out)
+        }
+      
     }
+  })
+  
+  tryObserveEvent(input$flip_lms_ho, ignoreInit = F, {
+    req(vals$lms_rx)
+    req(input$flip_lms_ho)
+    if(input$flip_lms_ho > 0){
+      if(input$flip_lms_ho/2 != round(input$flip_lms_ho/2)){ # all these extra if statements are necessary for bookmarking purposes (not confirmed)
+        vals$lms_rx[,1,] <- vals$lms_rx[,1,]*-1
+      }
+    }
+  })
+  
+  tryObserveEvent(input$flip_lms_vert, ignoreInit = F, {
+    req(vals$lms_rx)
+    vals$lms_rx[,2,] <- vals$lms_rx[,2,]*-1
   })
   
   tryObserveEvent(input$link_click_initiated, {
     req(input$link_click_initiated)
     req(gpa_coords_rx())
+    
     link_mean_df <- as.data.frame(vals$mshape_gpacoords_rx) # these are the mean placements the landmarks that match up with what is displayed from the plotAllSpecimens plot
+    
     colnames(link_mean_df) <- c("X", "Y")  #  
     new_link <- nearPoints(link_mean_df, input$link_click_initiated, 
                            xvar = "X", yvar = "Y",
                            threshold = 10, maxpoints = 1) # which mean landmark was closest to the click within 10 pixels
+    
     vals$links <- c(vals$links, row.names(new_link)) # add on a new landmark to include in the link chain
     if(length(vals$links) > 1){ # this loop helps construct the df in the correct format for plotting
       for(i in 1:(length(vals$links)-1)){
         vals$links_df <- rbind(vals$links_df, c(vals$links[i], vals$links[i+1])) # all the rows except the last
       }}
+    
   })
   
   tryObserveEvent(input$link_click_end, ignoreInit = T, { # this double click makes the links_df form in correct format for plotting
+    
     req(vals$links)
     vals$links_dbclicked <- 1 # this is for conditional paneling of the reset button
     link_mean_df <- as.data.frame(vals$mshape_gpacoords_rx) # these are the mean placements the landmarks that match up with what is displayed from the plotAllSpecimens plot
@@ -3700,26 +4045,44 @@ server <- function(input, output, session) {
     vals$links_dbclicked <- NULL
   })
   
-  tryObserveEvent(input$semilms_reset, {
-    vals$semis_brushed <- NULL
-    vals$curves_brushed <- NULL
-    
-    vals$curves_final_anyNAs <- FALSE
-    vals$curves_final <- NULL
-    
+  tryObserveEvent(input$semilms_reset, ignoreInit = T, {
     session$resetBrush("semis_selected")
+    vals$semis_brushed <- NULL
     reset("semilms_upload_file")
-    
-    newmat1 <- matrix(NA, ncol = 3)
-    colnames(newmat1) <- c("Before", "Slide", "After")
-    updateMatrixInput(session, "semilms_manual_input", value = newmat1)   
-    
+    vals$curves_final <- NULL
+    vals$curves <- NULL
+    reset("semilms_manual_input")
+    vals$reset_go_next <- "go"
   })
   
-  tryObserveEvent(input$semis_selected, ignoreInit = T, { 
+  tryObserveEvent(vals$reset_go_next, ignoreInit = T, {
+    if(!is.null(vals$reset_go_next)){
+      
+      vals$curves_final <- NULL
+      vals$curves <- NULL
+      
+      vals$curves_final_anyNAs <- FALSE
+      
+      if(!is.null(vals$shapesGM) & !is.null(vals$go_run_stereomorph_curves)) {
+        newmat1 <- vals$shapesGM$curves
+        colnames(newmat1) <- c("Before", "Slide", "After")
+        vals$curves_final <- newmat1
+      } else {
+        newmat1 <- matrix(NA, ncol = 3)
+        colnames(newmat1) <- c("Before", "Slide", "After")
+      }
+      
+      updateMatrixInput(session, "semilms_manual_input", value = newmat1)   
+      
+    }
+  })
+  
+  tryObserveEvent(input$semis_selected, ignoreInit = T, {
     req(gpa_coords_rx())
+    
     link_mean_df <- as.data.frame(vals$mshape_gpacoords_rx) # these are the mean placements the landmarks that match up with what is displayed from the plotAllSpecimens plot
     colnames(link_mean_df) <- c("X", "Y")
+    
     selected <- brushedPoints(link_mean_df, input$semis_selected, xvar = "X", yvar = "Y")
     if(length(unlist(selected))>1) { # if any landmarks were actually selected
       
@@ -3728,17 +4091,84 @@ server <- function(input, output, session) {
         
       } else {
         vals$semis_brushed <- unique(as.character(c(row.names(selected), vals$semis_brushed))) # 
+        
+      }
+    }
+  })
+  
+  tryObserveEvent(input$semis_stereomorph, ignoreInit = T, {
+    if(input$semis_stereomorph > 0) { # need to reformat this information into a links-style df (2 columns)
+      req(vals$shapesGM$curves)
+      stereomorph_curves <- vals$shapesGM$curves
+      stereomorph_links_df <- NULL
+      for(i in 1:nrow(stereomorph_curves)) {
+        stereomorph_links_df <- rbind(stereomorph_links_df, stereomorph_curves[i,1:2])
+        stereomorph_links_df <- rbind(stereomorph_links_df, stereomorph_curves[i,2:3])
+      }
+      vals$links_df <- unique(rbind(vals$links_df, stereomorph_links_df))
+    }
+  })
+  
+  tryObserveEvent(input$navbar, ignoreInit = T, {
+    if(input$navbar != "Data Input"){
+      if(input$shape_file_type == "StereoMorph") {
+        if(is.null(vals$go_run_stereomorph_curves) & vals$file_stereomorph_shape_curven > 0) {
+          shinyalert(
+            title = "STOP",
+            text = "The number of curve points has not yet been applied to the data input. 
+          You must press the 'Apply' button in order to initate the semi-landmark sampling 
+          scheme.",
+            type = "error",
+            html = T,
+            inputId = "stereomorph_curve_not_applied"
+          )
+        }
+        if(!is.null(vals$go_run_stereomorph_curves) & vals$file_stereomorph_shape_curven > 0) {
+          error1 <- vals$stereomorph_curve1_n != input$stereomorph_curve1_n
+          error2 <- vals$stereomorph_curve2_n != input$stereomorph_curve2_n
+          error3 <- vals$stereomorph_curve3_n != input$stereomorph_curve3_n
+          error4 <- vals$stereomorph_curve4_n != input$stereomorph_curve4_n
+          error5 <- vals$stereomorph_curve5_n != input$stereomorph_curve5_n
+          error6 <- vals$stereomorph_curve6_n != input$stereomorph_curve6_n
+          if(any(c(error1, error2, error3, error4, error5, error6))) {
+            shinyalert(
+              title = "STOP",
+              text = "The number of curve points has changed since you last applied the semi-landmark
+            sampling scheme. You must press the 'Apply' button again after having selected
+            the correct number of curve points to use.",
+              type = "error",
+              html = T,
+              inputId = "stereomorph_curve_not_applied_recently"
+            )
+          }
+          
+        }
+      }
+    }
+  })
+  
+  stereomorph_curve_error_listen <- reactive({list(input$stereomorph_curve_not_applied_recently, input$stereomorph_curve_not_applied)})
+  tryObserveEvent(stereomorph_curve_error_listen() , ignoreInit = T, {
+    updateNavbarPage(session, "navbar", selected = "Data Input") # doesnt need a bookmarking workaround
+  })
+  
+  tryObserveEvent(vals$shapesGM, ignoreInit = F, {
+    if(!is.null(vals$shapesGM) & !is.null(vals$go_run_stereomorph_curves)) {
+      curves_mat <- vals$shapesGM$curves
+      if(length(dim(curves_mat)) == 2) {
+        colnames(curves_mat) <- c("Before", "Slide", "After")
+        updateMatrixInput(session, "semilms_manual_input", value = curves_mat) 
       }
     }
   })
   
   brushes_links_listen <- reactive({list(vals$semis_brushed, vals$links_df)})
-  tryObserveEvent(brushes_links_listen(), ignoreInit = T, {
+  tryObserveEvent(brushes_links_listen(), ignoreInit = F, {
     
-    req(vals$semis_brushed)
     curves_rough <- data.frame("Before" = rep(NA, length(vals$semis_brushed)), 
                                "Slide" = unlist(vals$semis_brushed), 
                                "After" = rep(NA, length(vals$semis_brushed)))
+    
     befores_last <- NULL
     afters_last <- NULL
     if(!is.null(vals$links_df)) {
@@ -3746,13 +4176,20 @@ server <- function(input, output, session) {
         if(any(vals$links_df[,2] %in% vals$semis_brushed[i])) {
           befores_i <- vals$links_df[which(vals$links_df[,2] == vals$semis_brushed[i]),1]
           befores_last <- c(befores_last, befores_i[length(befores_i)])
-        } else {befores_last <- c(befores_last, NA)}
+          
+        } else {
+          befores_last <- c(befores_last, NA)}
         if(any(vals$links_df[,1] %in% vals$semis_brushed[i])){
           afters_i <- vals$links_df[which(vals$links_df[,1] == vals$semis_brushed[i]),2]
           afters_last <- c(afters_last, afters_i[length(afters_i)])
+          
         } else {afters_last <- c(afters_last, NA)}
       }
-      
+      if(ncol(curves_rough) == 2) {
+        curves_rough <-  data.frame("Before" = rep(NA, length(befores_last)), 
+                                    "Slide" = rep(NA, length(befores_last)), 
+                                    "After" = rep(NA, length(befores_last)))
+      }
       curves_rough$Before <- befores_last
       curves_rough$After <- afters_last
     }
@@ -3777,7 +4214,9 @@ server <- function(input, output, session) {
     
     mat <- matrix(unlist(keep), ncol = 3)
     colnames(mat) <- c("Before", "Slide", "After")
+    
     updateMatrixInput(session, "semilms_manual_input", value = mat) 
+    
   })
   
   tryObserveEvent(input$semilms_manual_input, ignoreInit = T, {
@@ -3789,10 +4228,9 @@ server <- function(input, output, session) {
     if(!identical(temp_mat, temp_vals_mat)) { # if there are already manual entries, add the curves to the bottom. labeled at beginning of script
       curves_rough <- rbind(temp_vals_mat, temp_mat)
       delete <- which(curves_rough[,2] == "")
-      if(length(delete) > 0) {
-        curves_rough <- curves_rough[-delete,]
-      }
+      if(length(delete) > 0) {curves_rough <- curves_rough[-delete,]}
       
+      # !!! add some code so that if you delete a row, it doesn't reappear 333333
       keep <- NULL
       if(length(curves_rough) == 3) { curves_rough <- matrix(curves_rough, ncol = 3)}
       for(i in 1:nlevels(as.factor(curves_rough[,2]))){
@@ -3823,7 +4261,6 @@ server <- function(input, output, session) {
     if(ncol(trait_raw_temp) != 3) {
       vals$alert_semilmmat_wrong_format <- rnorm(1) # reinitiate the warning message every time
     } else {
-      
       vals$curves_final <- trait_raw_temp
       
       trait_raw_temp <- matrix(unlist(trait_raw_temp), ncol = 3)
@@ -3836,17 +4273,19 @@ server <- function(input, output, session) {
   tryObserveEvent(vals$curves_final, ignoreInit = T, {
     # series of checks to make sure that vals$curves_final is valid
     req(vals$lms_rx)
-    lms_out_of_bounds_tf <- any(!(unlist((as.numeric(unlist(vals$curves_final))) %in% 1:dim(vals$lms_rx)[1])))
-    duplicate_brackets_tf <- any(vals$curves_final[,1] == vals$curves_final[,3])
-    duplicate_semis_to_before_tf <- any(vals$curves_final[,1] == vals$curves_final[,2])
-    duplicate_semis_to_after_tf <- any(vals$curves_final[,3] == vals$curves_final[,2])
-    repeated_semis_tf <- (length(vals$curves_final[,2]) != length(unique(vals$curves_final[,2])))
-    anynas_tf <-  anyNA(vals$curves_final)
-    
-    vals$curves_final_anyNAs <- any(c(lms_out_of_bounds_tf, duplicate_brackets_tf, 
-                                      duplicate_semis_to_before_tf, duplicate_semis_to_after_tf,
-                                      repeated_semis_tf,
-                                      anynas_tf))
+    if(nrow(vals$curves_final) > 0) {
+      lms_out_of_bounds_tf <- any(!(unlist((as.numeric(unlist(vals$curves_final))) %in% 1:dim(vals$lms_rx)[1])))
+      duplicate_brackets_tf <- any(vals$curves_final[,1] == vals$curves_final[,3])
+      duplicate_semis_to_before_tf <- any(vals$curves_final[,1] == vals$curves_final[,2])
+      duplicate_semis_to_after_tf <- any(vals$curves_final[,3] == vals$curves_final[,2])
+      repeated_semis_tf <- (length(vals$curves_final[,2]) != length(unique(vals$curves_final[,2])))
+      anynas_tf <-  anyNA(vals$curves_final)
+      
+      vals$curves_final_anyNAs <- any(c(lms_out_of_bounds_tf, duplicate_brackets_tf, 
+                                        duplicate_semis_to_before_tf, duplicate_semis_to_after_tf,
+                                        repeated_semis_tf,
+                                        anynas_tf))
+    }
     
   })
   
@@ -3968,7 +4407,6 @@ server <- function(input, output, session) {
   })
   
   tryObserve({ # this updates the field where you select which trait columns to use in plotting and analyses ???
-    
     if(is.null(vals$go_example_1)) { # if example button is not pushed
       if(!is.null(input$file_trait)) {
         # only run if trait file is uploaded
@@ -4155,8 +4593,22 @@ server <- function(input, output, session) {
                                selected = selected_item, inline = F) 
       
       
+      independent_variable_named_traj <- c("None" = "none1", independent_variable_named)
+      if(is.null(isolate(update_vals$trajectory_independent_var_selected))) { 
+        selected_item <- independent_variable_named_traj[1]
+      } else {
+        selected_item <- isolate(update_vals$trajectory_independent_var_selected)
+      }
+      vals$independent_variable_named_traj <- independent_variable_named_traj
+      
+      updateRadioButtons(session, "trajectory_independent_var", 
+                         choices = independent_variable_named_traj, # updating options for all columns available
+                         selected = selected_item, inline = F) 
+      
+      
       choice_list_color <- c("all_1_col", choice_list)
       names(choice_list_color) <- c("All One Color", names(choice_list))
+      
       
       
       if(is.null(isolate(update_vals$tip_col_category_selected))) { 
@@ -4226,20 +4678,23 @@ server <- function(input, output, session) {
         updateSelectInput(session, "allometry_color", label = "Color Points:", 
                           choices = choice_list_disc_allcol, selected = selected_item)
         
+        if(length(choice_list_disc)>0) {
+          names(choice_list_disc) <- substring(names(choice_list_disc), 4, nchar(names(choice_list_disc)))
+          if(is.null(isolate(update_vals$trajectory_group_selected))) { 
+            selected_item <- choice_list_disc[1]
+          } else { selected_item <- isolate(update_vals$trajectory_group_selected) }
+          
+          updateRadioButtons(session, "trajectory_group", "Trajectory Group:", choices = choice_list_disc, selected = selected_item)
+          
+          if(length(choice_list_disc) > 1){
+            if(is.null(isolate(update_vals$trajectory_trait_selected))) { 
+              selected_item <- choice_list_disc[1]
+            } else { selected_item <- isolate(update_vals$trajectory_trait_selected) }
+            updateRadioButtons(session, "trajectory_trait", "Trajectory Points:", choices = choice_list_disc, selected = selected_item)
+          }
+        } 
         
-        if(is.null(isolate(update_vals$trajectory_group_selected))) { 
-          selected_item <- choice_list_disc[1]
-        } else { selected_item <- isolate(update_vals$trajectory_group_selected) }
         
-        updateRadioButtons(session, "trajectory_group", "Group:", choices = choice_list_disc, selected = selected_item)
-        
-        
-        if(length(choice_list_disc) > 1){
-          if(is.null(isolate(update_vals$trajectory_trait_selected))) { 
-            selected_item <- choice_list_disc[2]
-          } else { selected_item <- isolate(update_vals$trajectory_trait_selected) }
-          updateRadioButtons(session, "trajectory_trait", "Trait:", choices = choice_list_disc, selected = selected_item)
-        }
         
         choice_list_shape <- c(19, 1, 18, choice_list_disc)
         names(choice_list_shape) <- c("Filled Circle", "Hollow Circle", "Filled Diamond", names(choice_list_disc))
@@ -4469,7 +4924,125 @@ server <- function(input, output, session) {
     
   })
   
+  tryObserveEvent(input$trajectory_group, ignoreInit = T, {
+    if(input$trajectory_group == input$trajectory_trait){
+      choice_list_disc_traj <- vals$trait_names 
+      names(choice_list_disc_traj) <- substring(names(choice_list_disc_traj), 4, nchar(names(choice_list_disc_traj)))
+      
+      selected_disc_options <- (1:length(colnames(vals$trait_rx)[-1]))[c(input$trait_1_treatment == "disc", 
+                                                                         input$trait_2_treatment == "disc", 
+                                                                         input$trait_3_treatment == "disc")]
+      choice_list_disc_traj <- choice_list_disc_traj[na.omit(selected_disc_options)]
+      selected_item <- choice_list_disc_traj[-match(input$trajectory_group, choice_list_disc_traj)][1]
+      updateRadioButtons(session, "trajectory_trait", choices = choice_list_disc_traj, selected = selected_item)
+    }
+    
+    independent_variable_named_traj <- isolate(vals$independent_variable_named_traj)
+    delete_1 <- which(independent_variable_named_traj == isolate(input$trajectory_group))
+    if(length(delete_1)>0) independent_variable_named_traj <- independent_variable_named_traj[-delete_1]
+    delete_2 <- which(independent_variable_named_traj == isolate(input$trajectory_trait))
+    if(length(delete_2)>0) independent_variable_named_traj <- independent_variable_named_traj[-delete_2]
+    
+    
+    updateRadioButtons(session, "trajectory_independent_var" , 
+                       choices = independent_variable_named_traj, # updating options for all columns available
+                       selected = independent_variable_named_traj[1], inline = F) 
+  })
   
+  tryObserveEvent(input$trajectory_trait, ignoreInit = T, {
+    if(input$trajectory_trait == input$trajectory_group){
+      choice_list_disc_traj <- vals$trait_names 
+      names(choice_list_disc_traj) <- substring(names(choice_list_disc_traj), 4, nchar(names(choice_list_disc_traj)))
+      
+      selected_disc_options <- (1:length(colnames(vals$trait_rx)[-1]))[c(input$trait_1_treatment == "disc", 
+                                                                         input$trait_2_treatment == "disc", 
+                                                                         input$trait_3_treatment == "disc")]
+      choice_list_disc_traj <- choice_list_disc_traj[na.omit(selected_disc_options)]
+      selected_item <- choice_list_disc_traj[-match(input$trajectory_trait, choice_list_disc_traj)][1]
+      updateRadioButtons(session, "trajectory_group", choices = choice_list_disc_traj, selected = selected_item)
+    }
+    
+    independent_variable_named_traj <- isolate(vals$independent_variable_named_traj)
+    delete_1 <- which(independent_variable_named_traj == isolate(input$trajectory_group))
+    if(length(delete_1)>0) independent_variable_named_traj <- independent_variable_named_traj[-delete_1]
+    delete_2 <- which(independent_variable_named_traj == isolate(input$trajectory_trait))
+    if(length(delete_2)>0) independent_variable_named_traj <- independent_variable_named_traj[-delete_2]
+    
+    updateRadioButtons(session, "trajectory_independent_var" , 
+                       choices = independent_variable_named_traj, # updating options for all columns available
+                       selected = independent_variable_named_traj[1], inline = F) 
+    
+    
+  })
+  
+  tryObserveEvent(input$go_trajectory_run, ignoreInit = T, {
+    if(input$go_trajectory_run>0){
+      req(gpa_coords_rx())
+      req(input$trajectory_trait)
+      
+      if(input$trajectory_trait != "none") {
+        this_group <- (2:4)[c(input$trajectory_group == "by_trait_1", input$trajectory_group == "by_trait_2", input$trajectory_group == "by_trait_3")]
+        group <- as.factor(vals$trait_rx[,this_group])
+        this_trait <- (2:4)[c(input$trajectory_trait == "by_trait_1", input$trajectory_trait == "by_trait_2", input$trajectory_trait == "by_trait_3")]
+        trait <- as.factor(vals$trait_rx[,this_trait])
+        if(!is.null(vals$go_example_1)) { # if using the example dataset, you have to adjust the 3 level trait so that there are repeats in all 4 'levels'
+          if(nlevels(group) > 2) { 
+            group[which(group == levels(group)[2])] <- levels(group)[3] # condensing levels for purposes of example
+            group <- droplevels(group)
+          }
+          if(nlevels(trait) > 2) { 
+            trait[which(trait == levels(trait)[2])] <- levels(trait)[3] # condensing levels for purposes of example
+            trait <- droplevels(trait)
+          }
+        }
+        
+        enough_inds_per_group <- min(table(paste(group,trait))) > 1
+        
+        if(enough_inds_per_group) {
+          coords_mat <- two.d.array(gpa_coords_rx())
+          if(input$trajectory_independent_var == "none1") {
+            
+            rrppdf <- rrpp.data.frame(coords = coords_mat, trait = trait, group = group)
+            vals$trajectory_fit <- lm.rrpp(coords ~ group*trait, data = rrppdf, 
+                                           iter = input$traj_perm, print.progress = F)
+            vals$TA <- trajectory.analysis(vals$trajectory_fit, groups = group, 
+                                           traj.pts = trait, print.progress = FALSE)
+            
+          } else {
+            this_independent_var <- (2:5)[c(input$trajectory_independent_var == "by_trait_1", 
+                                            input$trajectory_independent_var == "by_trait_2", 
+                                            input$trajectory_independent_var == "by_trait_3", 
+                                            input$trajectory_independent_var == "csize")]
+            if(this_independent_var == 5) {
+              req(vals$csize)
+              independent_var <- vals$csize
+            }
+            if(this_independent_var %in% 2:4) { independent_var <- vals$trait_rx[,this_independent_var]  }
+            
+            rrppdf <- rrpp.data.frame(coords = coords_mat, independent_var = independent_var, 
+                                      group = group, trait = trait)
+            
+            vals$trajectory_fit <- lm.rrpp(coords ~ independent_var + group*trait, data = rrppdf, 
+                                           iter = input$traj_perm, print.progress = F)
+            vals$TA <- trajectory.analysis(vals$trajectory_fit, 
+                                           groups = group, 
+                                           traj.pts = trait, 
+                                           #pca=T,
+                                           print.progress = FALSE)
+          }
+          
+        } else {
+          shinyalert(
+            title = "",
+            text = "not enough specimens per group"
+          )
+          vals$trajectory_fit <- NULL
+          vals$TA <- NULL
+        }
+        
+      }
+    }
+  })
   
   tryObserveEvent(input$integration_group_by, ignoreInit = F, {
     req(vals$trait_rx)
@@ -5180,100 +5753,124 @@ server <- function(input, output, session) {
   
   # plots for data checking
   
-  output$all_specimens <- renderPlot(bg = "transparent", { 
+  output$all_specimens <- metaRender2(renderPlot, bg = "transparent", {  
     req(gpa_coords_rx())
-    lm_col <- rep(input$semilms_color_other, dim(gpa_coords_rx())[1])
-    if(!is.null(vals$curves_final)) {
-      if(nrow(vals$curves_final)>0) {
-        curves_temp <- matrix(unlist(vals$curves_final), ncol = 3)
-        if((!anyNA(curves_temp[,2])) & !("" %in% curves_temp[,2])){ # as long as that semis column isn't NAs
-          lm_col[as.numeric(unlist(vals$curves_final[,c(1,3)]))] <- input$semilms_color_brackets 
-          lm_col[as.numeric(unlist(vals$curves_final[,2]))] <- input$semilms_color
+    gpa_coords_rx <- gpa_coords_rx()
+    metaExpr({
+      lm_col <- rep(..(input$semilms_color_other), dim(gpa_coords_rx)[1])
+      if(!is.null(vals$curves_final)) {
+        if(nrow(vals$curves_final)>0) {
+          curves_temp <- matrix(unlist(vals$curves_final), ncol = 3)
+          if((!anyNA(curves_temp[,2])) & !("" %in% curves_temp[,2])){ # as long as that semis column isn't NAs
+            lm_col[as.numeric(unlist(vals$curves_final[,c(1,3)]))] <- ..(input$semilms_color_brackets) 
+            lm_col[as.numeric(unlist(vals$curves_final[,2]))] <- ..(input$semilms_color)
+          }
         }
       }
-    }
-    par(mar = c(2,6,2,2))
-    plotAllSpecimens(gpa_coords_rx(),  label = T, links = vals$links_df, 
-                     plot.param = list(txt.cex = 1.5, txt.col = input$semilms_color_labels,
-                                       pt.bg = input$semilms_color_individlms, 
-                                       link.col = input$semilms_color_links,
-                                       mean.bg = lm_col))
+      
+      if(is.null(vals$links_df)) { go <- T } else { # making it stop before plotting when stereomorph curves havent yet been applied
+        if(any(!(vals$links_df %in% 1:dim(gpa_coords_rx)[1]))){ go <- F } else {go <- T}
+      } 
+      
+      if(go) {
+        par(mar = c(2,6,2,2))
+        plotAllSpecimens(gpa_coords_rx,  
+                         label = T, links = vals$links_df,  
+                         plot.param = list(txt.cex = 1.5, 
+                                           txt.col = ..(input$semilms_color_labels),
+                                           pt.bg = ..(input$semilms_color_individlms), 
+                                           link.col = ..(input$semilms_color_links),
+                                           mean.bg = lm_col))
+        
+      }
+    })
   })
   
-  output$outliers <- renderPlot(bg = "transparent", { 
+  
+  output$visualize_outliers_all <- metaRender2(renderPlot, bg = "transparent", { 
     req(gpa_coords_rx())
-    grouping <- NULL
-    column <- (2:4)[c("by_trait_1", "by_trait_2", "by_trait_3") %in% input$outlier_group]
-    if(is.null(update_vals$outlier_group_tf_selected)) {
-      outlier_group_tf <- input$outlier_group_tf
-    } else { outlier_group_tf <- update_vals$outlier_group_tf_selected}
-    
-    if(length(column) > 0 & outlier_group_tf) { 
-      grouping <- as.factor(vals$trait_rx[,column]) 
-      grouping <- grouping[match(dimnames(gpa_coords_rx())[[3]], vals$trait_rx[,1])]
-    } else {grouping <- NULL}
-    if(outlier_group_tf) {
-      which_group_new <- as.numeric(input$outlier_group_level_plotted)
-    } else { which_group_new <- 1 }
-    x <- plotOutliers.ekb1(gpa_coords_rx(), groups = grouping)
-    
-    plotOutliers.ekb2(x, gpa_coords_rx(), groups = grouping, 
-                      which_group = which_group_new, pt_cex = as.numeric(input$outlier_plot_pt_cex),
-                      txt_cex = as.numeric(input$outlier_plot_txt_cex), 
-                      show_point_names = input$outlier_plot_show_point_names_tf) 
-    if(is.null(vals$outlier_row) == "FALSE") { points(x = vals$outlier_row[1], y = vals$outlier_row[2], col = "red", 
-                                                      cex = as.numeric(input$outlier_plot_pt_cex) + 2, pch = 1) } # this adds a red circle around whichever specimen was selected and visualized
-    
-    
+    gpa_coords_rx <- gpa_coords_rx()
+    metaExpr({
+      grouping <- NULL
+      column <- (2:4)[c("by_trait_1", "by_trait_2", "by_trait_3") %in% ..(input$outlier_group)]
+      #if(is.null(update_vals$outlier_group_tf_selected)) {
+      outlier_group_tf <- ..(input$outlier_group_tf)
+      #} else { outlier_group_tf <- update_vals$outlier_group_tf_selected}
+      
+      if(length(column) > 0 & outlier_group_tf) { 
+        grouping <- as.factor(vals$trait_rx[,column]) 
+        grouping <- grouping[match(dimnames(gpa_coords_rx)[[3]], vals$trait_rx[,1])]
+      } else {grouping <- NULL}
+      if(outlier_group_tf) {
+        which_group_new <- as.numeric(..(input$outlier_group_level_plotted))
+      } else { which_group_new <- 1 }
+      x <- plotOutliers.ekb1(gpa_coords_rx, groups = grouping)
+      
+      plotOutliers.ekb2(x, gpa_coords_rx, groups = grouping, 
+                        which_group = which_group_new, pt_cex = as.numeric(..(input$outlier_plot_pt_cex)),
+                        txt_cex = as.numeric(..(input$outlier_plot_txt_cex)), 
+                        show_point_names = ..(input$outlier_plot_show_point_names_tf)) 
+      if(!is.null(vals$outlier_row)) { points(x = vals$outlier_row[1], y = vals$outlier_row[2], col = "red", 
+                                              cex = as.numeric(..(input$outlier_plot_pt_cex)) + 2, pch = 1) } # this adds a red circle around whichever specimen was selected and visualized
+      
+    })
   })
   
-  output$outlier_selected_lms <- renderPlot(bg = "transparent", {
+  output$outlier_selected_lms <- metaRender2(renderPlot, bg = "transparent", {
     req(vals$outlier_row)
+    gpa_coords_rx <- gpa_coords_rx()
+    
+    
     grouping <- NULL
     column <- (2:4)[c("by_trait_1", "by_trait_2", "by_trait_3") %in% input$outlier_group]
     if(length(column) > 0 & input$outlier_group_tf) { 
       grouping <- as.factor(vals$trait_rx[,column]) 
-      grouping <- grouping[match(dimnames(gpa_coords_rx())[[3]], vals$trait_rx[,1])]
+      grouping <- grouping[match(dimnames(gpa_coords_rx)[[3]], vals$trait_rx[,1])]
     } else {grouping <- NULL}
     if(input$outlier_group_tf) {
       which_group_new <- as.numeric(input$outlier_group_level_plotted)
     } else { which_group_new <- 1 }
     
-    x1 <- plotOutliers.ekb1(gpa_coords_rx(), groups = grouping)
-    x <- plotOutliers.ekb2(x1, gpa_coords_rx(), groups = grouping, 
-                           which_group = which_group_new, pt_cex = as.numeric(input$outlier_plot_pt_cex),
-                           produce_plot = F, txt_cex = as.numeric(input$outlier_plot_txt_cex), 
-                           show_point_names = input$outlier_plot_show_point_names_tf)
-    y <- x[order(x, decreasing = TRUE)]
+    x1 <- plotOutliers.ekb1(gpa_coords_rx, groups = grouping)
+    vals$x <- plotOutliers.ekb2(x1, gpa_coords_rx, groups = grouping, 
+                                which_group = which_group_new, pt_cex = as.numeric(input$outlier_plot_pt_cex),
+                                produce_plot = F, txt_cex = as.numeric(input$outlier_plot_txt_cex), 
+                                show_point_names = input$outlier_plot_show_point_names_tf)
+    y <- x[order(vals$x, decreasing = TRUE)]
     outlier_df <- data.frame("x" = order(y, decreasing = TRUE), "y" = y)
-    selected_outlier <- match(row.names(vals$outlier_row), names(x))
-    lm_col <- rep(input$vis_outliers_color_other, dim(gpa_coords_rx())[1])
-    if(!is.null(vals$curves_final)) {
-      temp_mat <- matrix(vals$curves_final, ncol = 3, byrow = T)
-      if(!anyNA(temp_mat[,2])){ 
-        lm_col[as.numeric(unlist(vals$curves_final[,2]))] <- input$vis_outliers_color
-      }
-    }
     
-    par(mar = c(0,2,4,0))
-    plot(gpa_coords_rx()[,,selected_outlier], col = lm_col, pch = 19, cex = 2,
-         main = paste("Selected Specimen: ", row.names(vals$outlier_row), sep = ""), 
-         asp = 1, axes = F) # displays the selected specimen landmark placement
-    text(x = gpa_coords_rx()[,,selected_outlier][,1]-0.01, y = gpa_coords_rx()[,,selected_outlier][,2] - 0.01, 
-         labels = 1:(nrow(gpa_coords_rx()[,,selected_outlier])), col = input$vis_outliers_color_labels) # adds labels to the landmarks
-    if(!is.null(vals$links_df)){
-      for (i in 1:nrow(vals$links_df)) {
-        seg_df <- gpa_coords_rx()[,,selected_outlier]
-        xys <- seg_df[vals$links_df[i,],]
-        segments(x0 = xys[1], y0 = xys[3],x1 = xys[2], y1 = xys[4], col = input$vis_outliers_color_links)
+    metaExpr({
+      
+      selected_outlier <- match(row.names(vals$outlier_row), names(vals$x))
+      lm_col <- rep(..(input$vis_outliers_color_other), dim(gpa_coords_rx)[1])
+      if(!is.null(vals$curves_final)) {
+        temp_mat <- matrix(vals$curves_final, ncol = 3, byrow = T)
+        if(!anyNA(temp_mat[,2])){ 
+          lm_col[as.numeric(unlist(vals$curves_final[,1]))] <- ..(input$vis_outliers_color_brackets)
+          lm_col[as.numeric(unlist(vals$curves_final[,3]))] <- ..(input$vis_outliers_color_brackets)
+          lm_col[as.numeric(unlist(vals$curves_final[,2]))] <- ..(input$vis_outliers_color)
+        }
       }
-    }
-    
+      
+      par(mar = c(0,2,4,0))
+      plot(gpa_coords_rx[,,selected_outlier], col = lm_col, pch = 19, cex = 2,
+           main = paste("Selected Specimen: ", row.names(vals$outlier_row), sep = ""), 
+           asp = 1, axes = F) # displays the selected specimen landmark placement
+      text(x = gpa_coords_rx[,,selected_outlier][,1]-0.01, y = gpa_coords_rx[,,selected_outlier][,2] - 0.01, 
+           labels = 1:(nrow(gpa_coords_rx[,,selected_outlier])), col = ..(input$vis_outliers_color_labels)) # adds labels to the landmarks
+      if(!is.null(vals$links_df)){
+        for (i in 1:nrow(vals$links_df)) {
+          seg_df <- gpa_coords_rx[,,selected_outlier]
+          xys <- seg_df[vals$links_df[i,],]
+          segments(x0 = xys[1], y0 = xys[3],x1 = xys[2], y1 = xys[4], col = ..(input$vis_outliers_color_links))
+        }
+      }
+    })
     
   })
   
   output$outlier_removed_names <- renderText(sep = ", ",{
-    if(!is.null(isolate(vals$outlier_removed_names)) | !is.null(isolate(update_vals$remove_outlier_specimen_unselected))){
+    if(!is.null(vals$outlier_removed_names) | !is.null(isolate(update_vals$remove_outlier_specimen_unselected))){
       vals$outlier_removed_names <- unique(c(isolate(vals$outlier_removed_names), 
                                              isolate(update_vals$remove_outlier_specimen_unselected)))
     }
@@ -5359,133 +5956,170 @@ server <- function(input, output, session) {
     }
   })
   
-  output$morphospace <- renderPlot(bg = scales::alpha("white", 0), {
+  output$morphospace <- metaRender2(renderPlot, bg = scales::alpha("white", 0), {
     req(vals$morphospace)
     pr <- pca_rx() 
     
     # the following section is modified from geomorph:::plot.gm.prcomp
-    class(pr) <- "ordinate"
-    if(!is.null(vals$tip_pch)) {input_pch <- as.numeric(vals$tip_pch)} else {input_pch <- 19}
+    
     if(is.null(input$flip_x_axis)) { input.flip_axis <- NULL }
     if(round(input$flip_x_axis/2) != input$flip_x_axis/2) {
       input.flip_axis  <- 1 } else { input.flip_axis <- NULL}
     if(round(input$flip_y_axis/2) != input$flip_y_axis/2) {
       input.flip_axis  <- c(input.flip_axis, 2) } 
-    input.flip_axis <- as.numeric(input.flip_axis)
+    vals$input.flip_axis <- as.numeric(input.flip_axis)
     
-    pr.plot <- RRPP:::plot.ordinate(pr, axis1 = as.numeric(input$pca_x_axis), axis2 = as.numeric(input$pca_y_axis), 
-                                    pch = input_pch, cex = as.numeric(input$tip_cex),
-                                    col = vals$tip_col, asp = 1,
-                                    flip = input.flip_axis) # its unclear why the axis line types are red too
+    gpa_coords_rx <- gpa_coords_rx()
     
-    abline(h = 0, lty = 2) # these are only here until Mike fixes the plot.ordinate function in RRPP
-    abline(v = 0, lty = 2) # these are only here until Mike fixes the plot.ordinate function in RRPP
-    
-    if(input$show_tip_label) {
-      text(pr.plot$points, rownames(pr.plot$points), adj = c(-(input$tip_cex)/15,-(input$tip_cex)/15),
-           cex = as.numeric(input$tip_txt_cex), col = vals$tip_col)
-    }# up to here
-    
-    # this part is first so that points appear over the top of the phylogeny branches
-    if(input$include_phylo) {
+    metaExpr({
       
-      z <- vals$morphospace$phylo$phy.pcdata
-      edges <- as.matrix(vals$phy_rx$edge)
+      class(pr) <- "ordinate"
+      if(!is.null(vals$tip_pch)) {input_pch <- as.numeric(vals$tip_pch)} else {input_pch <- 19}
+      pr.plot <- RRPP:::plot.ordinate(pr, axis1 = as.numeric(..(input$pca_x_axis)), 
+                                      axis2 = as.numeric(..(input$pca_y_axis)), 
+                                      pch = input_pch, cex = as.numeric(..(input$tip_cex)),
+                                      col = vals$tip_col, asp = 1,
+                                      flip = vals$input.flip_axis) # its unclear why the axis line types are red too
       
-      for (i in 1:NROW(edges)) {
-        pts <- z[edges[i, ], ]
-        points(pts, type = "l", col = input$edge_col, lwd = as.numeric(input$edge_width), lty = 1) 
-      }
-      ancs <- z[(length(vals$phy_rx$tip.label)+1):nrow(z),]
-      points(ancs, pch = as.numeric(input$node_pch), cex = as.numeric(input$node_cex), col = input$node_col)
+      abline(h = 0, lty = 2) # these are only here until Mike fixes the plot.ordinate function in RRPP
+      abline(v = 0, lty = 2) # these are only here until Mike fixes the plot.ordinate function in RRPP
       
-      if(input$show_node_label) {
-        text(ancs, rownames(ancs), adj = c(-(input$node_cex)/15,-(input$node_cex)/15), 
-             cex = as.numeric(input$node_txt_cex), col = input$node_txt_col) # all these can be changed if we want to make them options
-      }
-    }
-    
-    if(!is.null(vals$morpho_clicked)) {
-      if(input$warp_comparison_start == "selected_obs") {
-        points(x = vals$specimen_row_ref[,as.numeric(input$pca_x_axis)], y = vals$specimen_row_ref[,as.numeric(input$pca_y_axis)], col = "red", cex = as.numeric(input$tip_cex) + 1.2, pch = 1)
-      }
-      req(input$warp_comparison_end)
-      if(input$warp_comparison_end == "selected_obs") {
-        points(x = vals$specimen_row_targ[,as.numeric(input$pca_x_axis)], y = vals$specimen_row_targ[,as.numeric(input$pca_y_axis)], col = "red", cex = as.numeric(input$tip_cex) + 1, pch = 1)
-      } 
-    }
-    
-    if(is.null(vals$morpho_dbclicked) == "FALSE") { 
-      points(x = vals$projection_row[1], y = vals$projection_row[2], col = "red", cex = as.numeric(input$tip_cex) + 1, pch = 4)
-    }
-    
-    if(input$warp_comparison_show_arrow == TRUE) {
-      if(!is.null(input$warp_comparison_end)) {
-        if(input$warp_comparison_start == "mean") { start.xy <- c(0,0)}
-        if(input$warp_comparison_start == "selected_proj") { start.xy <- vals$projection_row[1:2]}
-        if(input$warp_comparison_start == "selected_obs" | input$warp_comparison_start == "selected_obs_byname") { 
-          start.xy <- c(as.numeric(vals$specimen_row_ref[,as.numeric(input$pca_x_axis)]), as.numeric(vals$specimen_row_ref[,as.numeric(input$pca_y_axis)])) }
-        if(input$warp_comparison_end == "mean") { end.xy <- c(0,0)}
-        if(input$warp_comparison_end == "selected_proj") { end.xy <- vals$projection_row[1:2]}
-        if(input$warp_comparison_end == "selected_obs"| input$warp_comparison_end == "selected_obs_byname") { 
-          end.xy <- c(as.numeric(vals$specimen_row_targ[,as.numeric(input$pca_x_axis)]), as.numeric(vals$specimen_row_targ[,as.numeric(input$pca_y_axis)]))  }
+      if(..(input$show_tip_label)) {
+        text(pr.plot$points, rownames(pr.plot$points), adj = c(-(..(input$tip_cex))/15,-(..(input$tip_cex))/15),
+             cex = as.numeric(..(input$tip_txt_cex)), col = vals$tip_col)
+      }# up to here
+      
+      # this part is first so that points appear over the top of the phylogeny branches
+      if(..(input$include_phylo)) {
+        z <- vals$morphospace$phylo$phy.pcdata
         
-        arrows(x0 = start.xy[1], y0 = start.xy[2], x1 = end.xy[1], y1 = end.xy[2], col = "red", lty = 1, lwd = 2)
+        if(length(vals$input.flip_axis)>0) { # if x or y axes are supposed to flip, gotta do that for the phylo too
+          if(1 %in% vals$input.flip_axis) {
+            z[,1] <- isolate(vals$morphospace$phylo$phy.pcdata)[,1]*-1
+          }
+          if(2 %in% vals$input.flip_axis) {
+            z[,2] <- isolate(vals$morphospace$phylo$phy.pcdata)[,2]*-1
+          }
+        }
+        
+        edges <- as.matrix(vals$phy_rx$edge)
+        
+        
+        for (i in 1:NROW(edges)) {
+          pts <- z[edges[i, ], ]
+          points(pts, type = "l", col = ..(input$edge_col), lwd = as.numeric(..(input$edge_width)), lty = 1) 
+        }
+        ancs <- z[(length(vals$phy_rx$tip.label)+1):nrow(z),]
+        points(ancs, pch = as.numeric(..(input$node_pch)), cex = as.numeric(..(input$node_cex)), col = ..(input$node_col))
+        
+        if(..(input$show_node_label)) {
+          text(ancs, rownames(ancs), adj = c(-(..(input$node_cex))/15,-(..(input$node_cex))/15), 
+               cex = as.numeric(..(input$node_txt_cex)), col = ..(input$node_txt_col)) # all these can be changed if we want to make them options
+        }
       }
-    }
-    
-    if(input$show_convex_hull_1 | 
-       input$show_convex_hull_2 | 
-       input$show_convex_hull_3) {
-      selected_trait <- (2:4)[c(input$show_convex_hull_1, input$show_convex_hull_2, input$show_convex_hull_3)]
-      colored_tips <- (2:4)[c(input$tip_col_category == "by_trait_1", input$tip_col_category == "by_trait_2", input$tip_col_category == "by_trait_3")]
       
-      col_list_modified <- list(vals$color_options_list$hull1, vals$color_options_list$hull2, vals$color_options_list$tips)
-      
-      if(length(colored_tips) == 0) {
-        col_list_modified <-  list(vals$color_options_list$hull1, vals$color_options_list$hull2, vals$color_options_list$hull3)
+      if(!is.null(vals$morpho_clicked)) {
+        if(..(input$warp_comparison_start == "selected_obs")) {
+          points(x = vals$specimen_row_ref[,as.numeric(..(input$pca_x_axis))], 
+                 y = vals$specimen_row_ref[,as.numeric(..(input$pca_y_axis))], col = "red", 
+                 cex = as.numeric(..(input$tip_cex)) + 1.2, pch = 1)
+        }
+        # req(..(input$warp_comparison_end))
+        if(..(input$warp_comparison_end) == "selected_obs") {
+          points(x = vals$specimen_row_targ[,as.numeric(..(input$pca_x_axis))],
+                 y = vals$specimen_row_targ[,as.numeric(..(input$pca_y_axis))], col = "red", 
+                 cex = as.numeric(..(input$tip_cex)) + 1, pch = 1)
+        } 
       }
-      if(length(colored_tips) > 0) { 
-        if(colored_tips == selected_trait[1]) {
-          col_list_modified <- list(vals$color_options_list$tips, vals$color_options_list$hull1, vals$color_options_list$hull2)
-        } else {
-          if(length(selected_trait) > 1) {
-            if(colored_tips == selected_trait[2]) { 
-              col_list_modified <- list(vals$color_options_list$hull1, vals$color_options_list$tips, vals$color_options_list$hull2 )
+      
+      if(is.null(vals$morpho_dbclicked) == "FALSE") { 
+        points(x = vals$projection_row[1], y = vals$projection_row[2], col = "red", 
+               cex = as.numeric(..(input$tip_cex)) + 1, pch = 4)
+      }
+      
+      if(..(input$warp_comparison_show_arrow) == TRUE) {
+        if(!is.null(..(input$warp_comparison_end))) {
+          if(..(input$warp_comparison_start) == "mean") { start.xy <- c(0,0)}
+          if(..(input$warp_comparison_start) == "selected_proj") { start.xy <- vals$projection_row[1:2]}
+          if(..(input$warp_comparison_start) == "selected_obs" |
+             ..(input$warp_comparison_start) == "selected_obs_byname") { 
+            start.xy <- c(as.numeric(vals$specimen_row_ref[,as.numeric(..(input$pca_x_axis))]), 
+                          as.numeric(vals$specimen_row_ref[,as.numeric(..(input$pca_y_axis))])) }
+          if(..(input$warp_comparison_end) == "mean") { end.xy <- c(0,0)}
+          if(..(input$warp_comparison_end) == "selected_proj") { end.xy <- vals$projection_row[1:2]}
+          if(..(input$warp_comparison_end) == "selected_obs"| 
+             ..(input$warp_comparison_end) == "selected_obs_byname") { 
+            end.xy <- c(as.numeric(vals$specimen_row_targ[,as.numeric(..(input$pca_x_axis))]), 
+                        as.numeric(vals$specimen_row_targ[,as.numeric(..(input$pca_y_axis))]))  }
+          
+          arrows(x0 = start.xy[1], y0 = start.xy[2], x1 = end.xy[1], y1 = end.xy[2], 
+                 col = "red", lty = 1, lwd = 2)
+        }
+      }
+      
+      if(..(input$show_convex_hull_1) | 
+         ..(input$show_convex_hull_2) | 
+         ..(input$show_convex_hull_3)) {
+        selected_trait <- (2:4)[c(..(input$show_convex_hull_1), 
+                                  ..(input$show_convex_hull_2), 
+                                  ..(input$show_convex_hull_3))]
+        colored_tips <- (2:4)[c(..(input$tip_col_category) == "by_trait_1", 
+                                ..(input$tip_col_category) == "by_trait_2", 
+                                ..(input$tip_col_category) == "by_trait_3")]
+        
+        col_list_modified <- list(vals$color_options_list$hull1, vals$color_options_list$hull2, vals$color_options_list$tips)
+        
+        if(length(colored_tips) == 0) {
+          col_list_modified <-  list(vals$color_options_list$hull1, vals$color_options_list$hull2, vals$color_options_list$hull3)
+        }
+        if(length(colored_tips) > 0) { 
+          if(colored_tips == selected_trait[1]) {
+            col_list_modified <- list(vals$color_options_list$tips, vals$color_options_list$hull1, vals$color_options_list$hull2)
+          } else {
+            if(length(selected_trait) > 1) {
+              if(colored_tips == selected_trait[2]) { 
+                col_list_modified <- list(vals$color_options_list$hull1, vals$color_options_list$tips, vals$color_options_list$hull2 )
+              }
             }
           }
         }
-      }
-      
-      
-      for (i in 1:length(selected_trait)) {
-        this_col <- selected_trait[i]
-        tip_col_fac <- as.character(vals$trait_rx[match(dimnames(gpa_coords_rx())[[3]], vals$trait_rx[,1]),this_col])
-        lev <- length(unique(tip_col_fac))
-        lev_options <- unique(tip_col_fac)
-        col_mat <- unlist(col_list_modified[[i]]) 
-        for(j in 1:length(unique(tip_col_fac))) {
-          reordered_edges <- pr$x[which(tip_col_fac == lev_options[j]), c(as.numeric(input$pca_x_axis), as.numeric(input$pca_y_axis))]
-          edge_points <- row.names(reordered_edges)[chull(reordered_edges)]
-          polygon(x = pr$x[edge_points, as.numeric(input$pca_x_axis)], 
-                  y = pr$x[edge_points, as.numeric(input$pca_y_axis)], 
-                  col = adjustcolor(col_mat[j],alpha.f = .5), 
-                  border = col_mat[j]) # copy this code to the export part of the morphospace
+        
+        for (i in 1:length(selected_trait)) {
+          this_col <- selected_trait[i]
+          tip_col_fac <- as.character(vals$trait_rx[match(dimnames(gpa_coords_rx)[[3]], vals$trait_rx[,1]),this_col])
+          lev <- length(unique(tip_col_fac))
+          lev_options <- unique(tip_col_fac)
+          col_mat <- unlist(col_list_modified[[i]]) 
+          for(j in 1:length(unique(tip_col_fac))) {
+            reordered_edges <- pr$x[which(tip_col_fac == lev_options[j]), 
+                                    c(as.numeric(..(input$pca_x_axis)), as.numeric(..(input$pca_y_axis)))]
+            edge_points <- row.names(reordered_edges)[chull(reordered_edges)]
+            polygon(x = pr$x[edge_points, as.numeric(..(input$pca_x_axis))], 
+                    y = pr$x[edge_points, as.numeric(..(input$pca_y_axis))], 
+                    col = adjustcolor(col_mat[j],alpha.f = .5), 
+                    border = col_mat[j]) # copy this code to the export part of the morphospace
+          }
         }
       }
-    }
+    })
   }, width = "auto", height = "auto")
   
   # Plots with warp grids
   
-  plotRefToTarget_rx <- reactive({ 
+  plotRefToTarget_rx <- metaReactive2({ 
     req(ref_rx())
     req(targ_rx())
     req(vals$warp_initiated)
     
-    par(mar = c(0,0,0,0))
-    plotRefToTarget(ref_rx(), targ_rx(), mag = as.numeric(input$warp_mag), label = input$warp_labels,
-                    links = vals$links_df, bg = "transparent", method = input$warp_type, gridPars = gridPar_vals())
+    ref_rx <- ref_rx()
+    targ_rx <- targ_rx()
+    gridPar_vals <- gridPar_vals()
+    metaExpr({
+      par(mar = c(0,0,0,0))
+      plotRefToTarget(ref_rx, targ_rx, mag = ..(input$warp_mag), label = ..(input$warp_labels),
+                      links = vals$links_df, bg = "transparent", method = ..(input$warp_type), 
+                      gridPars = gridPar_vals)
+    })
   })
   
   output$warp_grid_name <- renderText({
@@ -5903,6 +6537,7 @@ server <- function(input, output, session) {
     
     name
   })
+  
   output$model_comparison_model_3 <- renderText({ # copied from model_tested
     req(vals$trait_rx)
     req(input$independent_variables_model_3)
@@ -5944,24 +6579,34 @@ server <- function(input, output, session) {
   })
   
   output$allometry_plot <- renderPlot(bg = "transparent", {
-    
+    req(input$allometry_predictor)
     if(!is.null(input$allometry_predictor)) {
-      this_trait <- (2:5)[c(input$allometry_predictor == "by_trait_1", input$allometry_predictor == "by_trait_2", input$allometry_predictor == "by_trait_3", input$allometry_predictor == "csize" )]
-      if(this_trait == 5) { 
-        if(input$allometry_log_csize) {
-          predictor <- log(vals$csize)
-        } else { predictor <- vals$csize }
-      } else { predictor <- vals$trait_rx[,this_trait] }
-      this_color <- (1:4)[c(input$allometry_color == "all_one_color", input$allometry_color == "by_trait_1", input$allometry_color == "by_trait_2", input$allometry_color == "by_trait_3")]
-      if(this_color == 1) { color <- rep("black", dim(gpa_coords_rx())[3])} else {
-        color <- as.factor(vals$trait_rx[,this_color])
+      this_trait <- (2:6)[c(input$allometry_predictor == "by_trait_1", 
+                            input$allometry_predictor == "by_trait_2", 
+                            input$allometry_predictor == "by_trait_3", 
+                            input$allometry_predictor == "csize",
+                            input$allometry_predictor == "none")]
+      if(this_trait != 6) {
+        if(this_trait == 5) { 
+          req(vals$csize)
+          if(input$allometry_log_csize) {
+            predictor <- log(vals$csize)
+          } else { predictor <- vals$csize }
+        } else { 
+          req(vals$trait_rx)
+          predictor <- vals$trait_rx[,this_trait]
+        }
+        
+        this_color <- (1:4)[c(input$allometry_color == "all_one_color", input$allometry_color == "by_trait_1", input$allometry_color == "by_trait_2", input$allometry_color == "by_trait_3")]
+        if(this_color == 1) { color <- rep("black", dim(gpa_coords_rx())[3])} else {
+          color <- as.factor(vals$trait_rx[,this_color])
+        }
+        geomorph:::plot.procD.lm(vals$fit, type = input$allometry_type, reg.type = input$allometry_reg_type, 
+                                 logsz = input$allometry_log_csize,
+                                 predictor = predictor, col = color, 
+                                 pch = 19, cex = as.numeric(input$allometry_pt_size))
       }
-      geomorph:::plot.procD.lm(vals$fit, type = input$allometry_type, reg.type = input$allometry_reg_type, 
-                               logsz = input$allometry_log_csize,
-                               predictor = predictor, col = color, 
-                               pch = 19, cex = as.numeric(input$allometry_pt_size))
     }
-    
   })
   
   output$model_trajectory <- renderText({
@@ -5970,91 +6615,171 @@ server <- function(input, output, session) {
     if(input$trajectory_group[1] != "Trait 1") {
       name <- "Model Tested: Shape ~ "
       vars <- NULL
+      if("by_trait_1" %in% input$trajectory_independent_var) {vars_ind <- substring(names(vals$trait_names)[1], 4, nchar(names(vals$trait_names)[1]))}
+      if("by_trait_2" %in% input$trajectory_independent_var) {vars_ind <- substring(names(vals$trait_names)[2], 4, nchar(names(vals$trait_names)[2]))}
+      if("by_trait_3" %in% input$trajectory_independent_var) {vars_ind <- substring(names(vals$trait_names)[3], 4, nchar(names(vals$trait_names)[3]))}
+      if(input$trajectory_independent_var == "csize") { vars_ind <- "Centroid Size" }
+      if(input$trajectory_independent_var == "none1") {vars_ind <- NULL }
+      if(!is.null(vars_ind)) name <- paste(name, vars_ind,  " + ", sep = "")
       
-      if("by_trait_1" %in% input$trajectory_treatment) {vars <- c(vars, substring(names(vals$trait_names)[1], 4, nchar(names(vals$trait_names)[1])))}
-      if("by_trait_2" %in% input$trajectory_treatment) {vars <- c(vars, substring(names(vals$trait_names)[2], 4, nchar(names(vals$trait_names)[2])))}
-      if("by_trait_3" %in% input$trajectory_treatment) {vars <- c(vars, substring(names(vals$trait_names)[3], 4, nchar(names(vals$trait_names)[3])))}
       if("by_trait_1" %in% input$trajectory_group) {vars <- c(vars, substring(names(vals$trait_names)[1], 4, nchar(names(vals$trait_names)[1])))}
       if("by_trait_2" %in% input$trajectory_group) {vars <- c(vars, substring(names(vals$trait_names)[2], 4, nchar(names(vals$trait_names)[2])))}
       if("by_trait_3" %in% input$trajectory_group) {vars <- c(vars, substring(names(vals$trait_names)[3], 4, nchar(names(vals$trait_names)[3])))}
+      if("by_trait_1" %in% input$trajectory_trait) {vars <- c(vars, substring(names(vals$trait_names)[1], 4, nchar(names(vals$trait_names)[1])))}
+      if("by_trait_2" %in% input$trajectory_trait) {vars <- c(vars, substring(names(vals$trait_names)[2], 4, nchar(names(vals$trait_names)[2])))}
+      if("by_trait_3" %in% input$trajectory_trait) {vars <- c(vars, substring(names(vals$trait_names)[3], 4, nchar(names(vals$trait_names)[3])))}
       
       name <- paste(name, vars[1], sep = "")
       if(length(vars)>1){
         for (i in 2:length(vars)){
-          name <- paste(name, vars[i], sep = "*")
+          name <- paste(name, vars[i], sep = " * ")
         }
       }
       name
     }
   })
   
-  trajectory_listen <- reactive({ list(input$trajectory_group, input$trajectory_trait, gpa_coords_rx(), vals$trait_rx)})
-  tryObserveEvent(trajectory_listen(), {
+  output$traj_trait_level_1 <- renderText({
     req(vals$trait_rx)
-    req(gpa_coords_rx())
-    if(input$trajectory_trait != "none") {
-      this_group <- (2:4)[c(input$trajectory_group == "by_trait_1", input$trajectory_group == "by_trait_2", input$trajectory_group == "by_trait_3")]
-      group <- as.factor(vals$trait_rx[,this_group])
-      this_trait <- (2:4)[c(input$trajectory_trait == "by_trait_1", input$trajectory_trait == "by_trait_2", input$trajectory_trait == "by_trait_3")]
-      trait <- as.factor(vals$trait_rx[,this_trait])
-      if(!is.null(vals$go_example_1)) { # if using the example dataset, you have to adjust the 3 level trait so that there are repeats in all 4 'levels'
+    if("by_trait_1" %in% input$trajectory_trait) {trait_selected <- vals$trait_rx[,2]}
+    if("by_trait_2" %in% input$trajectory_trait) {trait_selected <- vals$trait_rx[,3]}
+    if("by_trait_3" %in% input$trajectory_trait) {trait_selected <- vals$trait_rx[,4]}
+    
+    if(input$trajectory_trait != "nonet") {
+      vals$traj_trait_nlevels <- nlevels(as.factor(trait_selected))
+      if(length(trait_selected) > 1) {
+        levels(as.factor(trait_selected))[1]
+        
+      }
+    }
+  })
+  
+  output$traj_trait_level_2 <- renderText({
+    req(vals$trait_rx)
+    if("by_trait_1" %in% input$trajectory_trait) {trait_selected <- vals$trait_rx[,2]}
+    if("by_trait_2" %in% input$trajectory_trait) {trait_selected <- vals$trait_rx[,3]}
+    if("by_trait_3" %in% input$trajectory_trait) {trait_selected <- vals$trait_rx[,4]}
+    
+    if(input$trajectory_trait != "nonet") {
+      if(length(trait_selected) > 1) {
+        levels(as.factor(trait_selected))[2]
+      }
+    }
+  })
+  
+  output$traj_trait_level_3 <- renderText({
+    req(vals$trait_rx)
+    if("by_trait_1" %in% input$trajectory_trait) {trait_selected <- vals$trait_rx[,2]}
+    if("by_trait_2" %in% input$trajectory_trait) {trait_selected <- vals$trait_rx[,3]}
+    if("by_trait_3" %in% input$trajectory_trait) {trait_selected <- vals$trait_rx[,4]}
+    
+    if(input$trajectory_trait != "nonet") {
+      if(nlevels(as.factor(trait_selected)) > 2) {
+        levels(as.factor(trait_selected))[3]
+      }
+    }
+  })
+  
+  output$traj_trait_level_4 <- renderText({
+    req(vals$trait_rx)
+    if("by_trait_1" %in% input$trajectory_trait) {trait_selected <- vals$trait_rx[,2]}
+    if("by_trait_2" %in% input$trajectory_trait) {trait_selected <- vals$trait_rx[,3]}
+    if("by_trait_3" %in% input$trajectory_trait) {trait_selected <- vals$trait_rx[,4]}
+    
+    if(input$trajectory_trait != "nonet") {
+      if(nlevels(as.factor(trait_selected)) > 3) {
+        levels(as.factor(trait_selected))[4]
+      }
+    }
+  })
+  
+  output$traj_trait_level_5 <- renderText({
+    req(vals$trait_rx)
+    if("by_trait_1" %in% input$trajectory_trait) {trait_selected <- vals$trait_rx[,2]}
+    if("by_trait_2" %in% input$trajectory_trait) {trait_selected <- vals$trait_rx[,3]}
+    if("by_trait_3" %in% input$trajectory_trait) {trait_selected <- vals$trait_rx[,4]}
+    
+    if(input$trajectory_trait != "nonet") {
+      if(nlevels(as.factor(trait_selected)) > 4) {
+        levels(as.factor(trait_selected))[5]
+      }
+    }
+  })
+  
+  output$traj_trait_level_6 <- renderText({
+    req(vals$trait_rx)
+    if("by_trait_1" %in% input$trajectory_trait) {trait_selected <- vals$trait_rx[,2]}
+    if("by_trait_2" %in% input$trajectory_trait) {trait_selected <- vals$trait_rx[,3]}
+    if("by_trait_3" %in% input$trajectory_trait) {trait_selected <- vals$trait_rx[,4]}
+    
+    if(input$trajectory_trait != "nonet") {
+      if(nlevels(as.factor(trait_selected)) > 5) {
+        levels(as.factor(trait_selected))[6]
+      }
+    }
+  })
+  
+  output$trajectory_results <- renderPrint({
+    req(vals$trajectory_fit)
+    sum <- summary(vals$TA, attribute = input$trajectory_attribute, show.trajectories = T)
+    sum
+  })
+  
+  output$trajectory_plot <- renderPlot(bg = "transparent", {
+    req(vals$TA)
+    this_group <- (1:4)[c(isolate(input$trajectory_group) == "noneg",
+                          isolate(input$trajectory_group) == "by_trait_1", 
+                          isolate(input$trajectory_group) == "by_trait_2", 
+                          isolate(input$trajectory_group) == "by_trait_3")]
+    if(this_group != 1) group <- as.factor(isolate(vals$trait_rx)[,this_group])
+    this_trait <- (1:4)[c(isolate(input$trajectory_trait) == "nonet",
+                          isolate(input$trajectory_trait) == "by_trait_1", 
+                          isolate(input$trajectory_trait) == "by_trait_2", 
+                          isolate(input$trajectory_trait) == "by_trait_3")]
+    if(this_trait != 1) {trait <- as.factor(isolate(vals$trait_rx)[,this_trait])} else {trait <- NULL}
+    if(!is.null(isolate(vals$go_example_1))) { # if using the example dataset, you have to adjust the 3 level trait so that there are repeats in all 4 'levels'
+      if(!is.null(group)){
         if(nlevels(group) > 2) { 
           group[which(group == levels(group)[2])] <- levels(group)[3] # condensing levels for purposes of example
           group <- droplevels(group)
         }
+      }
+      if(!is.null(trait)){
         if(nlevels(trait) > 2) { 
           trait[which(trait == levels(trait)[2])] <- levels(trait)[3] # condensing levels for purposes of example
           trait <- droplevels(trait)
         }
       }
-      
-      enough_inds_per_group <- min(table(paste(group,trait))) > 1
-      
-      if(enough_inds_per_group) {
-        coords_mat <- two.d.array(gpa_coords_rx())
-        rrppdf <- rrpp.data.frame(coords = coords_mat, trait = trait, group = group)
-        vals$trajectory_fit <- lm.rrpp(coords ~ trait*group, data = rrppdf, iter = 999)
-        vals$TA <- trajectory.analysis(fit, groups = group, traj.pts = trait, print.progress = FALSE)
-      } else {
-        shinyalert(
-          title = "",
-          text = "not enough specimens per group"
-        )
-        vals$trajectory_fit <- NULL
-        vals$TA <- NULL
-      }
-      
     }
     
-  })
-  
-  output$trajectory_results <- renderPrint({
-    req(vals$trajectory_fit)
+    if(!is.null(group)){
+      if(nlevels(group) < 8) { 
+        gs <- c(21:25, 8, 7)[1:nlevels(group)]
+      } else { gs <- c(21:25, 8, 7, rep(1, nlevels(group) - 7))[1:nlevels(group)] }# all higher levels than 8 get pch = 1}
+    } else gs <- NULL
     
-    paste(reveal.model.designs(vals$trajectory_fit))
-    summary(vals$TA, attribute = input$trajectory_attribute)
-  })
-  
-  output$trajectory_plot <- renderPlot(bg = "transparent", {
-    req(vals$TA)
-    this_group <- (2:4)[c(input$trajectory_group == "by_trait_1", input$trajectory_group == "by_trait_2", input$trajectory_group == "by_trait_3")]
-    group <- as.factor(vals$trait_rx[,this_group])
-    this_trait <- (2:4)[c(input$trajectory_trait == "by_trait_1", input$trajectory_trait == "by_trait_2", input$trajectory_trait == "by_trait_3")]
-    trait <- as.factor(vals$trait_rx[,this_trait])
-    if(!is.null(vals$go_example_1)) { # if using the example dataset, you have to adjust the 3 level trait so that there are repeats in all 4 'levels'
-      if(nlevels(group) > 2) { 
-        group[which(group == levels(group)[2])] <- levels(group)[3] # condensing levels for purposes of example
-        group <- droplevels(group)
-      }
-      if(nlevels(trait) > 2) { 
-        trait[which(trait == levels(trait)[2])] <- levels(trait)[3] # condensing levels for purposes of example
-        trait <- droplevels(trait)
-      }
-    }
+    if(!is.null(trait)){
+      tr_col_vec <- c(input$traj_trait_1_col, input$traj_trait_2_col, input$traj_trait_3_col,
+                      input$traj_trait_4_col, input$traj_trait_5_col, input$traj_trait_6_col, "black")
+      bgs <- as.numeric(trait)
+      bgs[which(bgs == 1)] <- tr_col_vec[1]
+      bgs[which(bgs == 2)] <- tr_col_vec[2]
+      bgs[which(bgs == 3)] <- tr_col_vec[3]
+      bgs[which(bgs == 4)] <- tr_col_vec[4]
+      bgs[which(bgs == 5)] <- tr_col_vec[5]
+      bgs[which(bgs == 6)] <- tr_col_vec[6]
+      bgs[which(!(bgs %in% tr_col_vec))] <- tr_col_vec[7] # putting all other trait levels as black
+    } else bgs <- NULL
     
-    TP <- plot(vals$TA, pch = group + 20, bg = as.numeric(trait), cex = 0.7, col = "gray")
-    add.trajectories(TP, traj.pch = c(21, 22), start.bg = 1, end.bg = 2)
-    legend("topright", c(levels(group), levels(trait)), pch =  c(21, 22,19,19), col = c("black", "black", "black", "red"), pt.bg = 1)
+    TP <- plot(vals$TA, pch = gs, bg = bgs, cex = input$trajectory_specimen_cex, col = bgs)
+    add.trajectories.ekb(TP, 
+                         traj.pch = gs, 
+                         traj.gp.bg = tr_col_vec[1:nlevels(trait)], 
+                         traj.cex = input$trajectory_traj_cex)
+    
+    leg_cols <- c(rep("black", nlevels(group)), tr_col_vec[1:nlevels(trait)])
+    legend("topright", c(levels(group), levels(trait)), pch = c(gs, rep(20, nlevels(trait))), 
+           col = leg_cols, pt.bg = leg_cols,  cex = input$trajectory_traj_cex*(2/3))
     
   })
   
@@ -6315,15 +7040,45 @@ server <- function(input, output, session) {
   
   # ??? fix so that plot rendering is not redundant. possible with ggplot, unsure otherwise.
   
-  output$export_all_data <- downloadHandler(
-    filename = function() { paste('all_data.RData') },
+  output$export_data_current_state <- downloadHandler( # RRRR start here, this has been broken when not quite up to all the way to warp grid export current data
+    filename = function() { 
+      name_raw <- paste('data_current_state-', Sys.time(), '.RData', sep= "") 
+      name_edited <- str_replace_all(name_raw, " ", "_")
+      name_edited <- str_replace_all(name_edited, ":", ".")
+    },
     content = function(file) {
-      phy_rx <- phy_rx()
-      gpa_coords_rx <- gpa_coords_rx()
-      trait_rx <- trait_rx()
-      pruning_script <- pruning_script_function(vals$lms_rx, vals$phy_rx, vals$trait_rx, vals$outlier_removed_names) 
-      save(gpa_coords_rx, phy_rx, trait_rx,  file = file)
-      write.table(pruning_script, file = "~/Downloads/pruning_script.R")
+      phy_rx <- phy_rx() # !!! is this right??
+      if(!is.null(vals$go_run_gpa)) {
+        gpa_coords_rx <- gpa_coords_rx()
+      } else {  gpa_coords_rx <- vals$lms_rx}
+      trait_rx <- trait_rx() # !!! is this right??
+      
+      pca_rx <- pca_rx() 
+      ref_rx <- ref_rx() 
+      if(!is.null(vals$warp_initiated)){ targ_rx <- targ_rx()  } else { targ_rx <- NULL } # necessary to protect a failed download
+      gridPar_vals <- gridPar_vals()
+      
+      if(is.null(vals$go_example_1)) {tpsnts_file <- input$file_tps } else { tpsnts_file <- "plethspecies$land"}
+      
+      if(input$shape_file_type == "TPSorNTS") {
+        shape_input_args <- list("file" = tpsnts_file,
+                                 "negNA" = input$neg_lms, "specID"= input$spec_id, 
+                                 "bypass_gpa_TF" = input$raw_lms_already_aligned)
+      } 
+      if(input$shape_file_type == "StereoMorph") {
+        shape_input_args <- list("nCurvePts" = vals$curve_n_vec)
+      } 
+      
+      vals2 <- list()
+      for(i in names(vals)) vals2[[i]] <- vals[[i]]
+      
+      save(gpa_coords_rx, phy_rx, trait_rx, 
+           pca_rx,  
+           ref_rx, 
+           #targ_rx, # fails 
+           #gridPar_vals, # fails alone
+           shape_input_args, vals2,
+           file = file)
     }
   )
   
@@ -6352,6 +7107,20 @@ server <- function(input, output, session) {
     }
   ) 
   
+  output$export_plot_all_specimen_code <- downloadHandler(
+    filename = function() { paste('all_specimens_aligned_code.R') },
+    content = function(file){
+      code <- expandChain(output$all_specimens())
+      code <- c(
+        'rm(list = ls())
+load("data_current_state.RData") # replace with file with your data from Export Current Data button) 
+library(geomorph)
+vals <- vals2
+        ', code) # add disclaimer.
+      writeLines(as.character(code), file(file))
+    }
+  )
+  
   output$export_semilm_mat <- downloadHandler( 
     filename = function() {paste('semilms_matrix.csv')},
     content = function(file) {
@@ -6379,262 +7148,126 @@ server <- function(input, output, session) {
       pdf(file)
       plotOutliers.ekb2(x, gpa_coords_rx(), groups = grouping, which_group = which_group_new, pt_cex = as.numeric(input$outlier_plot_pt_cex),
                         txt_cex = as.numeric(input$outlier_plot_txt_cex), show_point_names = input$outlier_plot_show_point_names_tf) 
-      if(is.null(vals$outlier_row) == "FALSE") { points(x = vals$outlier_row[1], y = vals$outlier_row[2], col = "red", 
-                                                        cex = as.numeric(input$outlier_plot_pt_cex) + 2, pch = 1) } # this adds a red circle around whichever specimen was selected and visualized
+      if(!is.null(vals$outlier_row)) { points(x = vals$outlier_row[1], y = vals$outlier_row[2], col = "red", 
+                                              cex = as.numeric(input$outlier_plot_pt_cex) + 2, pch = 1) } # this adds a red circle around whichever specimen was selected and visualized
       dev.off() # copied from above. using a reactive alone doesn't work
       
     }
   )
   
-  output$export_individual_specimen_shape <- downloadHandler( 
+  output$export_visualize_outliers_all_code <- downloadHandler(
+    filename = function() { paste('visualize_outliers_all_code.R') },
+    content = function(file){
+      code <- expandChain(output$visualize_outliers_all())
+      code <- c(
+        'rm(list = ls())
+load("data_current_state.RData") # replace with file with your data from Export Current Data button) 
+library(geomorph)
+source("support_functions.R") # download support functions from github: https://github.com/ebaken/ShinyMorph/blob/main/published/support.functions.R 
+vals <- vals2', 
+        code)
+      writeLines(as.character(code), file(file))
+    }
+  )
+  
+  output$export_outlier_selected_lms <- downloadHandler( 
     filename = function() { paste(row.names(vals$outlier_row), "-landmarks.pdf", sep = "") },
     content = function(file) { 
       pdf(file)
       req(vals$outlier_row)
-      if(is.null(vals$outlier_row)) {
-        plot(1, type="n", axes=F, xlab="", ylab="")
-      } else {
-        grouping <- NULL
-        column <- (2:4)[c("by_trait_1", "by_trait_2", "by_trait_3") %in% input$outlier_group]
-        if(length(column) > 0 & input$outlier_group_tf) { 
-          grouping <- as.factor(vals$trait_rx[,column]) 
-          grouping <- grouping[match(dimnames(gpa_coords_rx())[[3]], vals$trait_rx[,1])]
-        } else {grouping <- NULL}
-        if(input$outlier_group_tf) {
-          which_group_new <- as.numeric(input$outlier_group_level_plotted)
-        } else { which_group_new <- 1 }
-        
-        x1 <- plotOutliers.ekb1(gpa_coords_rx(), groups = grouping)
-        x <- plotOutliers.ekb2(x1, gpa_coords_rx(), groups = grouping, 
-                               which_group = which_group_new, pt_cex = as.numeric(input$outlier_plot_pt_cex),
-                               produce_plot = F, txt_cex = as.numeric(input$outlier_plot_txt_cex), 
-                               show_point_names = input$outlier_plot_show_point_names_tf)
-        y <- x[order(x, decreasing = TRUE)]
-        outlier_df <- data.frame("x" = order(y, decreasing = TRUE), "y" = y)
-        selected_outlier <- match(row.names(vals$outlier_row), names(x))
-        lm_col <- rep(input$vis_outliers_color_other, dim(gpa_coords_rx())[1])
-        if(!is.null(vals$curves_final)) {
-          temp_mat <- matrix(vals$curves_final, ncol = 3, byrow = T)
-          if(!anyNA(temp_mat[,2])){ 
-            lm_col[as.numeric(unlist(vals$curves_final[,2]))] <- input$vis_outliers_color
-          }
-        }
-        par(mar = c(0,2,4,0))
-        plot(gpa_coords_rx()[,,selected_outlier], col = lm_col, pch = 19, cex = 2,
-             main = paste("Selected Specimen: ", row.names(vals$outlier_row), sep = ""), 
-             asp = 1, axes = F) # displays the selected specimen landmark placement
-        text(x = gpa_coords_rx()[,,selected_outlier][,1]-0.01, y = gpa_coords_rx()[,,selected_outlier][,2] - 0.01, 
-             labels = 1:(nrow(gpa_coords_rx()[,,selected_outlier])), col = input$vis_outliers_color_labels) # adds labels to the landmarks
-        if(!is.null(vals$links_df)){
-          for (i in 1:nrow(vals$links_df)) {
-            seg_df <- gpa_coords_rx()[,,selected_outlier]
-            xys <- seg_df[vals$links_df[i,],]
-            segments(x0 = xys[1], y0 = xys[3],x1 = xys[2], y1 = xys[4], col = input$vis_outliers_color_links)
-          }
+      grouping <- NULL
+      column <- (2:4)[c("by_trait_1", "by_trait_2", "by_trait_3") %in% input$outlier_group]
+      if(length(column) > 0 & input$outlier_group_tf) { 
+        grouping <- as.factor(vals$trait_rx[,column]) 
+        grouping <- grouping[match(dimnames(gpa_coords_rx())[[3]], vals$trait_rx[,1])]
+      } else {grouping <- NULL}
+      if(input$outlier_group_tf) {
+        which_group_new <- as.numeric(input$outlier_group_level_plotted)
+      } else { which_group_new <- 1 }
+      
+      x1 <- plotOutliers.ekb1(gpa_coords_rx(), groups = grouping)
+      x <- plotOutliers.ekb2(x1, gpa_coords_rx(), groups = grouping, 
+                             which_group = which_group_new, pt_cex = as.numeric(input$outlier_plot_pt_cex),
+                             produce_plot = F, txt_cex = as.numeric(input$outlier_plot_txt_cex), 
+                             show_point_names = input$outlier_plot_show_point_names_tf)
+      y <- x[order(x, decreasing = TRUE)]
+      outlier_df <- data.frame("x" = order(y, decreasing = TRUE), "y" = y)
+      selected_outlier <- match(row.names(vals$outlier_row), names(x))
+      lm_col <- rep(input$vis_outliers_color_other, dim(gpa_coords_rx())[1])
+      if(!is.null(vals$curves_final)) {
+        temp_mat <- matrix(vals$curves_final, ncol = 3, byrow = T)
+        if(!anyNA(temp_mat[,2])){ 
+          lm_col[as.numeric(unlist(vals$curves_final[,1]))] <- input$vis_outliers_color_brackets
+          lm_col[as.numeric(unlist(vals$curves_final[,3]))] <- input$vis_outliers_color_brackets
+          lm_col[as.numeric(unlist(vals$curves_final[,2]))] <- input$vis_outliers_color
         }
       }
+      
+      par(mar = c(0,2,4,0))
+      plot(gpa_coords_rx()[,,selected_outlier], col = lm_col, pch = 19, cex = 2,
+           main = paste("Selected Specimen: ", row.names(vals$outlier_row), sep = ""), 
+           asp = 1, axes = F) # displays the selected specimen landmark placement
+      text(x = gpa_coords_rx()[,,selected_outlier][,1]-0.01, y = gpa_coords_rx()[,,selected_outlier][,2] - 0.01, 
+           labels = 1:(nrow(gpa_coords_rx()[,,selected_outlier])), col = input$vis_outliers_color_labels) # adds labels to the landmarks
+      if(!is.null(vals$links_df)){
+        for (i in 1:nrow(vals$links_df)) {
+          seg_df <- gpa_coords_rx()[,,selected_outlier]
+          xys <- seg_df[vals$links_df[i,],]
+          segments(x0 = xys[1], y0 = xys[3],x1 = xys[2], y1 = xys[4], col = input$vis_outliers_color_links)
+        }
+      }
+      
+      
       dev.off() # copied from above. using a reactive alone doesn't work
     }
   )
   
-  output$export_phy_signal_plot <- downloadHandler(
-    filename = function() { paste("phylogenetic_signal_plot.pdf")},
-    content = function(file) {
-      req(vals$PS_shape)
-      pdf(file, width = 10, height = 6, pointsize = 14)
-      K.val <- vals$PS_shape$random.K
-      K.obs <- vals$PS_shape$phy.signal
-      p <- vals$PS_shape$pvalue
-      ndec <- nchar(1 / vals$PS_shape$permutations) - 2
-      K.obs <- round(K.obs, ndec)
-      p <- round(p, ndec)
-      hist(K.val,30,freq=TRUE,col="gray",xlab="Phylogenetic Signal from Random Permutations (K)", cex.main=0.8, main = "")
-      arrows(K.obs,50,K.obs,5,length=0.1,lwd=2)
-      text(K.obs,53, "Observed K")
-      dev.off()
+  output$export_outlier_selected_lms_code <- downloadHandler(
+    filename = function() { paste('outlier_selected_lms_code.R') },
+    content = function(file){
+      code <- expandChain(output$outlier_selected_lms())
+      code <- c(
+        'rm(list = ls())
+load("data_current_state.RData") # replace with file with your data from Export Current Data button) 
+library(geomorph)
+vals <- vals2', 
+        code)
+      writeLines(as.character(code), file(file))
     }
   )
   
-  output$export_phy_signal_results  <- downloadHandler(
-    filename = function() { paste("phylogenetic_signal_results.csv")},
-    content = function(file) {
-      req(vals$PS_shape)
-      physig <- vals$PS_shape$phy.signal
-      pval <- vals$PS_shape$pvalue
-      Z <- vals$PS_shape$Z
-      out<-c(Z, physig, pval)
-      rownames(out) <- c("Z", "PhySig (K)", "Pval")
-      write.csv(out, file)
+  
+  output$export_run_gpa_code <- downloadHandler(
+    filename = function() { paste('run_gpa_code.R') },
+    content = function(file){
+      code_p1 <- 'rm(list = ls())
+load("data_current_state.RData") # replace with file with your data from Export Current Data button) 
+library(geomorph)
+vals <- vals2
+if(anyNA(vals$lms_rx)) {
+lms_estimated <- estimate.missing(vals$lms_rx, method = "TPS")
+} else {lms_estimated <-  vals$lms_rx}
+
+if(!is.null(vals$curves)) {
+  curve.mat <- matrix(as.integer(as.matrix(vals$curves)), ncol = 3, byrow = F)
+  colnames(curve.mat) <- c("before", "slide", "after")
+} else { curve.mat <- NULL }
+vals$Data_gpa <- gpagen(lms_estimated, curves = curve.mat, '
+      code_p2 <- if(input$ProcD) { paste('ProcD = T,', sep = '') } else {
+        paste('ProcD = F,', sep = '') }
+      code_p3 <- if(input$Proj) { paste('Proj = T,', sep = '') } else {
+        paste('ProcD = F,', sep = '') }
+      code_p4 <- 'print.progress = F)
+
+gpa_coords_rx <- vals$Data_gpa$coords
+vals$csize <- vals$Data_gpa$Csize
+names(vals$csize) <- dimnames(gpa_coords_rx)[[3]]'
+      code <- c(code_p1, code_p2, code_p3, code_p4)
+      
+      writeLines(as.character(code), file(file))
     }
   )
   
-  output$export_modularity_visualization_plot <- downloadHandler(
-    filename = function() { paste("export_module_visualization_plot.pdf") },
-    content = function(file) {
-      pdf(file, width = 10, height = 6, pointsize = 8)
-      req(gpa_coords_rx())
-      coords <- vals$mshape_gpacoords_rx
-      point_cols <- as.character(vals$modularity_groups) 
-      point_cols[which(point_cols == "1")] <- input$module_1_col
-      point_cols[which(point_cols == "2")] <- input$module_2_col
-      point_cols[which(point_cols == "3")] <- input$module_3_col
-      point_cols[which(point_cols == "4")] <- input$module_4_col
-      point_cols[which(point_cols == "5")] <- input$module_5_col
-      point_cols[which(point_cols == "6")] <- input$module_6_col
-      point_cols[which(point_cols == "7")] <- input$module_7_col
-      point_cols[which(point_cols == "8")] <- input$module_8_col
-      
-      plot(matrix(coords, ncol = 2), axes = F, asp = 1, pch = 19, xlab = "", ylab = "", 
-           col = point_cols, cex = as.numeric(input$plot_modularity_visualization_cex),
-           main = NULL)
-      if(!is.null(vals$links_df)) {
-        for(i in 1:nrow(vals$links_df)) {
-          links <- rbind(coords[vals$links_df[i,1],], coords[vals$links_df[i,2],])
-          points(x = links[,1], y = links[,2], type = "l")
-        }
-      }
-      text(matrix(coords, ncol = 2), labels = 1:nrow(coords), pos = 4, col = point_cols, 
-           cex = as.numeric(input$plot_modularity_visualization_cex))
-      dev.off()
-    }
-  )   
-  
-  output$export_global_integration_plot <- downloadHandler(
-    filename = function() { paste("global_integration_plot.pdf")},
-    content = function(file) {
-      pdf(file, width = 18, height = 13)
-      globalIntegration(A = gpa_coords_rx(), ShowPlot = T) 
-      dev.off()
-    }
-  )
-  
-  output$export_integration_test_plot <- downloadHandler(
-    filename = function() { paste("integration_test_plot.pdf")},
-    content = function(file) {
-      pdf(file, width = 10, height = 7)
-      if(input$integration_group_by == "none"){
-        if(input$integration_phylo_tf) {
-          req(vals$phy_rx)
-          vals$IT <- phylo.integration(gpa_coords_rx(), phy = vals$phy_rx, 
-                                       partition.gp = vals$modularity_groups, iter = as.numeric(input$integration_test_perm), print.progress = F)
-        } else vals$IT <- integration.test(gpa_coords_rx(), partition.gp = vals$modularity_groups, 
-                                           iter = as.numeric(input$integration_test_perm), print.progress = F)
-        if(!is.null(vals$IT$XScores)) {
-          plot(vals$IT)
-        }
-      } else {
-        i <- (2:4)[c(input$integration_group_by == "by_trait_1", input$integration_group_by == "by_trait_2", input$integration_group_by == "by_trait_3")]
-        groupings <- as.factor(vals$trait_rx[,i])
-        integ.test <- list(rep(NA, nlevels(groupings)))
-        if(input$integration_phylo_tf) {
-          req(vals$phy_rx)
-          for(i in 1:nlevels(groupings)){
-            coords_subset <- gpa_coords_rx()[,,which(groupings == levels(groupings)[i])]
-            phy_subset <- keep.tip(vals$phy_rx, dimnames(coords_subset)[[3]])
-            integ.test.new <- phylo.integration(coords_subset, phy = phy_subset, partition.gp = vals$modularity_groups,
-                                                iter = as.numeric(input$integration_test_perm), print.progress = F)
-            integ.test[[i]] <- integ.test.new
-          }
-          input$integration_group_level
-          vals$IT <- integ.test[[as.numeric(isolate(input$integration_group_level))]]
-        } else {
-          for(i in 1:nlevels(groupings)){
-            coords.subset <- gpa_coords_rx()[,,which(groupings == levels(groupings)[i])]
-            integ.test.new <- integration.test(coords.subset, partition.gp = vals$modularity_groups, 
-                                               iter = as.numeric(input$integration_test_perm), print.progress = F)
-            integ.test[[i]] <- integ.test.new
-          }
-          input$integration_group_level # this is required so that the vals$ bit doesn't get triggered for this to run again if isolate taken out
-          
-          vals$IT <- integ.test[[as.numeric(isolate(input$integration_group_level))]]
-        }
-        if(!is.null(vals$IT$XScores)) {
-          plot(vals$IT)
-        }
-      }
-      dev.off()
-    }
-  )
-  
-  output$export_symmetry_plot <- downloadHandler(
-    filename = function() { paste("symmetry_plot.pdf")},
-    content = function(file) {
-      pdf(file, width = 18, height = 13)
-      req(vals$bilat_symmetry)
-      plot(vals$bilat_symmetry)
-      dev.off()
-      
-    }
-  )
-  
-  output$export_symmetry_tables <- downloadHandler(
-    filename = function() { paste("symmetry_anova_table.csv")},
-    content = function(file) {
-      req(vals$bilat_symmetry)
-      sum <- summary(vals$bilat_symmetry)
-      table <- sum$shape.anova
-      if(!is.null(sum$size.anova)) {
-        table <-  rbind(NA, table, NA, NA, sum$size.anova)
-        rownames(table)[1] <- "Shape ANOVA"
-        rownames(table)[nrow(sum$shape.anova)+3] <- "Centroid Size ANOVA"
-      }
-      write.csv(table, file)
-    }
-  )
-  
-  output$export_symmetry_landpairs_plot <- downloadHandler(
-    filename = function() { paste("symmetry_landpairs_plot.pdf")},
-    content = function(file) {
-      pdf(file, width = 10, height = 6)
-      req(gpa_coords_rx())
-      req(input$symmetry_landpairs_definitions)
-      
-      shape <- mshape(gpa_coords_rx())
-      class(shape) <- "array"
-      
-      symmetry_land_pairs <- as.matrix(input$symmetry_landpairs_definitions)
-      
-      if(!is.null(symmetry_land_pairs)) {
-        lm_col_vec <- rep('black', dim(gpa_coords_rx())[1])
-        lm_pch_vec <- rep('19', dim(gpa_coords_rx())[1])
-        if(nrow(symmetry_land_pairs) > 2) {
-          ncolors <- floor(dim(gpa_coords_rx())[1]/2) + 1
-          if(ncolors < 12) {
-            col_spec <- c("red", brewer.pal(name = "Spectral", n = ncolors)[-1])
-          } else { col_spec <- colorRampPalette(colors = c("red", "blue"), alpha = TRUE)(ncolors) }
-          
-          pch_spec <- c('15', '17')
-          
-          for(i in 1:nrow(symmetry_land_pairs)) {
-            lm_col_vec[as.numeric(symmetry_land_pairs[i,])] <- col_spec[i]
-          }
-          for(i in 1:ncol(symmetry_land_pairs)){
-            lm_pch_vec[as.numeric(symmetry_land_pairs[,i])] <- pch_spec[i]
-          }
-        } else {
-          lm_col_vec[as.numeric(symmetry_land_pairs[1,])] <- "red"
-          lm_pch_vec[as.numeric(symmetry_land_pairs[,1])] <- "15"
-          lm_pch_vec[as.numeric(symmetry_land_pairs[,2])] <- "17"
-        }
-      } else { 
-        lm_col_vec <- "black"
-        lm_pch_vec <- '19'
-      }
-      
-      plot(shape, col = lm_col_vec, pch = as.numeric(lm_pch_vec), cex = 2, asp = 1, axes = F, xlab = "", ylab = "") # displays the selected specimen landmark placement
-      text(x = shape[,1]-0.01, y = shape[,2] - 0.01, labels = 1:(nrow(shape))) # adds labels to the landmarks
-      if(!is.null(vals$links_df)){
-        for (i in 1:nrow(vals$links_df)) {
-          seg_df <- shape
-          xys <- seg_df[vals$links_df[i,],]
-          segments(x0 = xys[1], y0 = xys[3],x1 = xys[2], y1 = xys[4])
-        }
-      }
-      
-      dev.off()
-      
-    }
-  )
   
   output$export_rotation_loadings <- downloadHandler(
     filename = function() { paste("rotation_loadings.csv")},
@@ -6963,6 +7596,21 @@ server <- function(input, output, session) {
     }
   )
   
+  output$export_morphospace_code <- downloadHandler(
+    filename = function() { paste('morphospace_code.R') },
+    content = function(file){
+      code <- expandChain(output$morphospace())
+      code <- c(
+        'rm(list = ls())
+load("data_current_state.RData") # replace with file with your data from Export Current Data button) 
+library(geomorph)
+pr <- pca_rx
+vals <- vals2', 
+        code)
+      writeLines(as.character(code), file(file))
+    }
+  )
+  
   output$export_warp_grid <- downloadHandler(
     filename = function() { paste("warp_grid_plot.pdf") },
     content = function(file) { 
@@ -6974,6 +7622,219 @@ server <- function(input, output, session) {
                       links = vals$links_df, bg = "transparent", method = input$warp_type, gridPars = gridPar_vals())
       
       dev.off()
+    }
+  )
+  
+  output$export_warp_grid_code <- downloadHandler(
+    filename = function() { paste('warp_grid_code.R') },
+    content = function(file){
+      code <- expandChain(plotRefToTarget_rx())
+      code <- c(
+        'rm(list = ls())
+load("data_current_state.RData") # replace with file with your data from Export Current Data button) 
+library(geomorph)
+vals <- vals2', 
+        code)
+      writeLines(as.character(code), file(file))
+    }
+  )
+  
+  output$export_phy_signal_plot <- downloadHandler(
+    filename = function() { paste("phylogenetic_signal_plot.pdf")},
+    content = function(file) {
+      req(vals$PS_shape)
+      pdf(file, width = 10, height = 6, pointsize = 14)
+      K.val <- vals$PS_shape$random.K
+      K.obs <- vals$PS_shape$phy.signal
+      p <- vals$PS_shape$pvalue
+      ndec <- nchar(1 / vals$PS_shape$permutations) - 2
+      K.obs <- round(K.obs, ndec)
+      p <- round(p, ndec)
+      hist(K.val,30,freq=TRUE,col="gray",xlab="Phylogenetic Signal from Random Permutations (K)", cex.main=0.8, main = "")
+      arrows(K.obs,50,K.obs,5,length=0.1,lwd=2)
+      text(K.obs,53, "Observed K")
+      dev.off()
+    }
+  )
+  
+  output$export_phy_signal_results  <- downloadHandler(
+    filename = function() { paste("phylogenetic_signal_results.csv")},
+    content = function(file) {
+      req(vals$PS_shape)
+      physig <- vals$PS_shape$phy.signal
+      pval <- vals$PS_shape$pvalue
+      Z <- vals$PS_shape$Z
+      out<-c(Z, physig, pval)
+      rownames(out) <- c("Z", "PhySig (K)", "Pval")
+      write.csv(out, file)
+    }
+  )
+  
+  output$export_modularity_visualization_plot <- downloadHandler(
+    filename = function() { paste("export_module_visualization_plot.pdf") },
+    content = function(file) {
+      pdf(file, width = 10, height = 6, pointsize = 8)
+      req(gpa_coords_rx())
+      coords <- vals$mshape_gpacoords_rx
+      point_cols <- as.character(vals$modularity_groups) 
+      point_cols[which(point_cols == "1")] <- input$module_1_col
+      point_cols[which(point_cols == "2")] <- input$module_2_col
+      point_cols[which(point_cols == "3")] <- input$module_3_col
+      point_cols[which(point_cols == "4")] <- input$module_4_col
+      point_cols[which(point_cols == "5")] <- input$module_5_col
+      point_cols[which(point_cols == "6")] <- input$module_6_col
+      point_cols[which(point_cols == "7")] <- input$module_7_col
+      point_cols[which(point_cols == "8")] <- input$module_8_col
+      
+      plot(matrix(coords, ncol = 2), axes = F, asp = 1, pch = 19, xlab = "", ylab = "", 
+           col = point_cols, cex = as.numeric(input$plot_modularity_visualization_cex),
+           main = NULL)
+      if(!is.null(vals$links_df)) {
+        for(i in 1:nrow(vals$links_df)) {
+          links <- rbind(coords[vals$links_df[i,1],], coords[vals$links_df[i,2],])
+          points(x = links[,1], y = links[,2], type = "l")
+        }
+      }
+      text(matrix(coords, ncol = 2), labels = 1:nrow(coords), pos = 4, col = point_cols, 
+           cex = as.numeric(input$plot_modularity_visualization_cex))
+      dev.off()
+    }
+  )   
+  
+  output$export_global_integration_plot <- downloadHandler(
+    filename = function() { paste("global_integration_plot.pdf")},
+    content = function(file) {
+      pdf(file, width = 18, height = 13)
+      globalIntegration(A = gpa_coords_rx(), ShowPlot = T) 
+      dev.off()
+    }
+  )
+  
+  output$export_integration_test_plot <- downloadHandler(
+    filename = function() { paste("integration_test_plot.pdf")},
+    content = function(file) {
+      pdf(file, width = 10, height = 7)
+      if(input$integration_group_by == "none"){
+        if(input$integration_phylo_tf) {
+          req(vals$phy_rx)
+          vals$IT <- phylo.integration(gpa_coords_rx(), phy = vals$phy_rx, 
+                                       partition.gp = vals$modularity_groups, iter = as.numeric(input$integration_test_perm), print.progress = F)
+        } else vals$IT <- integration.test(gpa_coords_rx(), partition.gp = vals$modularity_groups, 
+                                           iter = as.numeric(input$integration_test_perm), print.progress = F)
+        if(!is.null(vals$IT$XScores)) {
+          plot(vals$IT)
+        }
+      } else {
+        i <- (2:4)[c(input$integration_group_by == "by_trait_1", input$integration_group_by == "by_trait_2", input$integration_group_by == "by_trait_3")]
+        groupings <- as.factor(vals$trait_rx[,i])
+        integ.test <- list(rep(NA, nlevels(groupings)))
+        if(input$integration_phylo_tf) {
+          req(vals$phy_rx)
+          for(i in 1:nlevels(groupings)){
+            coords_subset <- gpa_coords_rx()[,,which(groupings == levels(groupings)[i])]
+            phy_subset <- keep.tip(vals$phy_rx, dimnames(coords_subset)[[3]])
+            integ.test.new <- phylo.integration(coords_subset, phy = phy_subset, partition.gp = vals$modularity_groups,
+                                                iter = as.numeric(input$integration_test_perm), print.progress = F)
+            integ.test[[i]] <- integ.test.new
+          }
+          input$integration_group_level
+          vals$IT <- integ.test[[as.numeric(isolate(input$integration_group_level))]]
+        } else {
+          for(i in 1:nlevels(groupings)){
+            coords.subset <- gpa_coords_rx()[,,which(groupings == levels(groupings)[i])]
+            integ.test.new <- integration.test(coords.subset, partition.gp = vals$modularity_groups, 
+                                               iter = as.numeric(input$integration_test_perm), print.progress = F)
+            integ.test[[i]] <- integ.test.new
+          }
+          input$integration_group_level # this is required so that the vals$ bit doesn't get triggered for this to run again if isolate taken out
+          
+          vals$IT <- integ.test[[as.numeric(isolate(input$integration_group_level))]]
+        }
+        if(!is.null(vals$IT$XScores)) {
+          plot(vals$IT)
+        }
+      }
+      dev.off()
+    }
+  )
+  
+  output$export_symmetry_plot <- downloadHandler(
+    filename = function() { paste("symmetry_plot.pdf")},
+    content = function(file) {
+      pdf(file, width = 18, height = 13)
+      req(vals$bilat_symmetry)
+      plot(vals$bilat_symmetry)
+      dev.off()
+      
+    }
+  )
+  
+  output$export_symmetry_tables <- downloadHandler(
+    filename = function() { paste("symmetry_anova_table.csv")},
+    content = function(file) {
+      req(vals$bilat_symmetry)
+      sum <- summary(vals$bilat_symmetry)
+      table <- sum$shape.anova
+      if(!is.null(sum$size.anova)) {
+        table <-  rbind(NA, table, NA, NA, sum$size.anova)
+        rownames(table)[1] <- "Shape ANOVA"
+        rownames(table)[nrow(sum$shape.anova)+3] <- "Centroid Size ANOVA"
+      }
+      write.csv(table, file)
+    }
+  )
+  
+  output$export_symmetry_landpairs_plot <- downloadHandler(
+    filename = function() { paste("symmetry_landpairs_plot.pdf")},
+    content = function(file) {
+      pdf(file, width = 10, height = 6)
+      req(gpa_coords_rx())
+      req(input$symmetry_landpairs_definitions)
+      
+      shape <- mshape(gpa_coords_rx())
+      class(shape) <- "array"
+      
+      symmetry_land_pairs <- as.matrix(input$symmetry_landpairs_definitions)
+      
+      if(!is.null(symmetry_land_pairs)) {
+        lm_col_vec <- rep('black', dim(gpa_coords_rx())[1])
+        lm_pch_vec <- rep('19', dim(gpa_coords_rx())[1])
+        if(nrow(symmetry_land_pairs) > 2) {
+          ncolors <- floor(dim(gpa_coords_rx())[1]/2) + 1
+          if(ncolors < 12) {
+            col_spec <- c("red", brewer.pal(name = "Spectral", n = ncolors)[-1])
+          } else { col_spec <- colorRampPalette(colors = c("red", "blue"), alpha = TRUE)(ncolors) }
+          
+          pch_spec <- c('15', '17')
+          
+          for(i in 1:nrow(symmetry_land_pairs)) {
+            lm_col_vec[as.numeric(symmetry_land_pairs[i,])] <- col_spec[i]
+          }
+          for(i in 1:ncol(symmetry_land_pairs)){
+            lm_pch_vec[as.numeric(symmetry_land_pairs[,i])] <- pch_spec[i]
+          }
+        } else {
+          lm_col_vec[as.numeric(symmetry_land_pairs[1,])] <- "red"
+          lm_pch_vec[as.numeric(symmetry_land_pairs[,1])] <- "15"
+          lm_pch_vec[as.numeric(symmetry_land_pairs[,2])] <- "17"
+        }
+      } else { 
+        lm_col_vec <- "black"
+        lm_pch_vec <- '19'
+      }
+      
+      plot(shape, col = lm_col_vec, pch = as.numeric(lm_pch_vec), cex = 2, asp = 1, axes = F, xlab = "", ylab = "") # displays the selected specimen landmark placement
+      text(x = shape[,1]-0.01, y = shape[,2] - 0.01, labels = 1:(nrow(shape))) # adds labels to the landmarks
+      if(!is.null(vals$links_df)){
+        for (i in 1:nrow(vals$links_df)) {
+          seg_df <- shape
+          xys <- seg_df[vals$links_df[i,],]
+          segments(x0 = xys[1], y0 = xys[3],x1 = xys[2], y1 = xys[4])
+        }
+      }
+      
+      dev.off()
+      
     }
   )
   
@@ -7087,6 +7948,77 @@ server <- function(input, output, session) {
     }
   )
   
+  output$export_trajectory_plot <- downloadHandler(
+    filename = function() { paste("trajectory.pdf")},
+    content = function(file) { 
+      pdf(file, width = 10, height = 6, pointsize = 8)
+      req(vals$TA)
+      this_group <- (1:4)[c(isolate(input$trajectory_group) == "noneg",
+                            isolate(input$trajectory_group) == "by_trait_1", 
+                            isolate(input$trajectory_group) == "by_trait_2", 
+                            isolate(input$trajectory_group) == "by_trait_3")]
+      if(this_group != 1) group <- as.factor(isolate(vals$trait_rx)[,this_group])
+      this_trait <- (1:4)[c(isolate(input$trajectory_trait) == "nonet",
+                            isolate(input$trajectory_trait) == "by_trait_1", 
+                            isolate(input$trajectory_trait) == "by_trait_2", 
+                            isolate(input$trajectory_trait) == "by_trait_3")]
+      if(this_trait != 1) trait <- as.factor(isolate(vals$trait_rx)[,this_trait])
+      if(!is.null(isolate(vals$go_example_1))) { # if using the example dataset, you have to adjust the 3 level trait so that there are repeats in all 4 'levels'
+        if(!is.null(group)){
+          if(nlevels(group) > 2) { 
+            group[which(group == levels(group)[2])] <- levels(group)[3] # condensing levels for purposes of example
+            group <- droplevels(group)
+          }
+        }
+        if(!is.null(trait)){
+          if(nlevels(trait) > 2) { 
+            trait[which(trait == levels(trait)[2])] <- levels(trait)[3] # condensing levels for purposes of example
+            trait <- droplevels(trait)
+          }
+        }
+      }
+      
+      if(!is.null(group)){
+        if(nlevels(group) < 8) { 
+          gs <- c(21:25, 8, 7)[1:nlevels(group)]
+        } else { gs <- c(21:25, 8, 7, rep(1, nlevels(group) - 7))[1:nlevels(group)] }# all higher levels than 8 get pch = 1}
+      } else gs <- NULL
+      
+      if(!is.null(trait)){
+        tr_col_vec <- c(input$traj_trait_1_col, input$traj_trait_2_col, input$traj_trait_3_col,
+                        input$traj_trait_4_col, input$traj_trait_5_col, input$traj_trait_6_col, "black")
+        bgs <- as.numeric(trait)
+        bgs[which(bgs == 1)] <- tr_col_vec[1]
+        bgs[which(bgs == 2)] <- tr_col_vec[2]
+        bgs[which(bgs == 3)] <- tr_col_vec[3]
+        bgs[which(bgs == 4)] <- tr_col_vec[4]
+        bgs[which(bgs == 5)] <- tr_col_vec[5]
+        bgs[which(bgs == 6)] <- tr_col_vec[6]
+        bgs[which(!(bgs %in% tr_col_vec))] <- tr_col_vec[7] # putting all other trait levels as black
+      } else bgs <- NULL
+      
+      TP <- plot(vals$TA, pch = gs, bg = bgs, cex = input$trajectory_specimen_cex, col = bgs)
+      add.trajectories.ekb(TP, 
+                           traj.pch = gs, 
+                           traj.gp.bg = tr_col_vec[1:nlevels(trait)], 
+                           traj.cex = input$trajectory_traj_cex)
+      
+      leg_cols <- c(rep("black", nlevels(group)), tr_col_vec[1:nlevels(trait)])
+      legend("topright", c(levels(group), levels(trait)), pch = c(gs, rep(20, nlevels(trait))), 
+             col = leg_cols, pt.bg = leg_cols,  cex = input$trajectory_traj_cex*(2/3))
+      dev.off()
+    }
+  )
+  
+  output$export_trajectory_results <- downloadHandler(
+    filename = function() { paste("trajectory.csv")},
+    content = function(file) { 
+      req(vals$trajectory_fit)
+      sum <- summary(vals$TA, attribute = input$trajectory_attribute, show.trajectories = T)
+      write.csv(sum$summary.table, file)
+    }
+  )
+  
   #### Bookmarking ####
   
   onBookmark(function(state) {
@@ -7163,11 +8095,11 @@ server <- function(input, output, session) {
     bookmark_vals$time <- state$values$time
     
     vals$neg_lms <- state$values$vals$neg_lms
+    update_vals$links_df <- state$values$vals$links_df
     vals$links_df <- state$values$vals$links_df
     vals$specimen_row_targ <- state$values$vals$specimen_row_targ
     vals$specimen_row_ref <- state$values$vals$specimen_row_ref
     vals$go_example_1 <- state$values$vals$go_example_1
-    vals$curves_brushed <- state$values$vals$curves_brushed
     vals$curves_final <- state$values$vals$curves_final
     vals$links_dbclicked <- state$values$vals$links_dbclicked
     vals$csize <- state$values$vals$csize
@@ -7197,7 +8129,6 @@ server <- function(input, output, session) {
     vals$prune_datasets <- state$values$vals$prune_datasets
     vals$projection_row <- state$values$vals$projection_row
     vals$warp_initiated <- state$values$vals$warp_initiated
-    vals$links <- state$values$vals$links
     vals$alert_semilmmat_wrong_format <- state$values$vals$alert_semilmmat_wrong_format
     vals$semilms_manual <- state$values$vals$semilms_manual
     vals$trait_1_treatment <- state$values$vals$trait_1_treatment
